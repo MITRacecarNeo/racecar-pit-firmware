@@ -1,0 +1,594 @@
+/*
+ * teensy_racecar.ino - RACECAR Neo central Teensy controller.
+ *
+ * TeensyThreads firmware: drives steering servo + ESC, reads FlySky IA6B (PPM),
+ * LSM9DS1 IMU, INA226 power, MAX7219 matrix, WS2812B LEDs, and the motor Hall
+ * encoder. Talks to the Pi over Serial1 @ 230400 using a binary framed protocol
+ * (see docs/serial_protocol.md).
+ *
+ * Protocol v1 (odometry/SLAM scope):
+ *   RX (Pi->Teensy, 27 B): header + servo_deg(f32) + motor_mps(f32) + state(u8) + crc16
+ *   TX (Teensy->Pi, 72 B): header + timestamp(i32) + imu(f32x9) + encoder(i16 RPM)
+ *                          + ekf_delta(f32x3 dx,dy,dtheta) + crc16
+ * Speed is CLOSED-LOOP: the Pi commands m/s, the Teensy runs a PID on the encoder.
+ * LED + dot-matrix stay Teensy-local. Steering is open-loop (deg -> servo us).
+ *
+ * SAFETY: Pi control is gated by an RC switch (AUTO_CHANNEL, default FlySky SWB)
+ * and a command-freshness timeout. With the switch down OR stale commands, the
+ * car falls back to manual RC. CONFIRM AUTO_CHANNEL on your transmitter.
+ */
+
+#include <Arduino.h>
+#include <string.h>
+#include <Servo.h>
+#include <FastLED.h>
+#include <TeensyThreads.h>
+#include <PPMReader.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <INA226.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_LSM9DS1.h>
+#include <MD_Parola.h>
+#include <BasicLinearAlgebra.h>   // Library Manager: "BasicLinearAlgebra" (EKF)
+
+// --------------------------- RGB LED ---------------------------- //
+#define NUM_LEDS 84
+#define DATA_PIN 9
+#define BRIGHTNESS 25
+
+CRGB leds[NUM_LEDS];
+CRGBPalette16 currrentPalette = RainbowStripeColors_p;
+uint8_t colorIdx = 1;
+uint8_t numleds;
+// -------------------------- Servo and ESC ------------------------ //
+Servo steerServo, throtMot;
+const bool speedDemon = false;
+const uint16_t maxPWMThrot = 1650;
+const uint16_t maxPWMRev = 1350;
+const int steer_yaml_consts[2] = {6000, 1900}; // quarter-micro seconds
+const int throt_yaml_consts[2] = {6000, 3000}; // quarter-micro seconds
+const int steer_consts[2] = {steer_yaml_consts[0]/4, steer_yaml_consts[1]/4}; // 1025 : 1500 : 1975 us
+const int throt_consts[2] = {throt_yaml_consts[0]/4, throt_yaml_consts[1]/4}; // 750 : 1500 : 2250 us
+
+//           {steer, throt}  microseconds
+uint16_t cmds[2] = {1500, 1500};
+bool swA = 0;
+
+// ----------------------------- Teensy Threading ------------------- //
+Threads::Mutex CmdMutex;      // guards the Pi command vars (below)
+Threads::Mutex RxMutex;       // channelVals[]
+Threads::Mutex I2CMutex;
+Threads::Mutex SPIMutex;
+Threads::Mutex powerMutex;    // power[]
+Threads::Mutex ErrMutex;      // errorFlag
+Threads::Mutex ImuMutex;      // imuVals[]
+Threads::Mutex HallMutex;
+uint8_t errorFlag = 0, errType;
+
+// Pi drive command (decoded from the RX packet)
+float cmdServoDeg = 0.0f;     // steering angle, degrees
+float cmdMotorMps = 0.0f;     // target ground speed, m/s
+uint8_t cmdState = 0;
+volatile uint32_t lastCmdMicros = 0;
+
+// ----------------------------- FlySky IA6B Rx --------------------- //
+const uint8_t PPM_PIN = 5;
+const uint8_t ChannelCount = 8;
+// {Aileron, Elevator, Throttle, Rudder, SWA, SWB, SWC, SWD} 1000-2000 us
+uint16_t channelVals[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+// --------------------------- INA226 ------------------------ //
+INA226 INA(0x40);
+float power[3] = {0, 0, 0};  // Current (mA), Voltage (V), Power (mW)
+
+// ---------------------------- LSM9DS1 9-DOF IMU --------------------------//
+Adafruit_LSM9DS1 lsmimu = Adafruit_LSM9DS1();
+sensors_event_t a, m, g, temp;
+float imuVals[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+//------------------------------ MAX 7219 Dot Matrix ----------------------//
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
+#define NUM_DOT_MATRIX 3
+#define CS_PIN 10
+MD_Parola mx = MD_Parola(HARDWARE_TYPE, CS_PIN, NUM_DOT_MATRIX);
+
+// --------------------------------------- Hall Encoder ---------------------------//
+const uint8_t HALL_A_PIN = 30;
+const uint8_t HALL_B_PIN = 31;
+const uint8_t HALL_C_PIN = 32;
+const uint8_t MOT_TEMP_PIN = A17;
+
+// Motor pole pairs (poles / 2). VERIFY: hand-rotate 1 turn, count Hall
+// transitions. 6 -> 2-pole -> 1 ; 12 -> 4-pole -> 2.
+const float POLE_PAIRS = 2.0f;
+const int8_t DIR_SIGN = 1;                // flip if forward reads negative
+const uint32_t STOP_TIMEOUT_US = 300000;  // zero-speed timeout
+
+volatile uint32_t lastTransitionTime = 0;
+volatile uint32_t deltaTime = 0;
+volatile uint8_t currentState = 0;
+volatile uint8_t lastState = 0;
+volatile int8_t direction = 0;
+
+// --------------------------------- Encoder -----------------------------------//
+int8_t getDirection(uint8_t prev, uint8_t curr) {
+    static const uint8_t forwardSeq[6] = {1, 3, 2, 6, 4, 5};
+    for (int i = 0; i < 6; i++) {
+        if (forwardSeq[i] == prev) {
+            int next = forwardSeq[(i + 1) % 6];
+            int prevInSeq = forwardSeq[(i + 5) % 6];
+            if (curr == next) return -1;
+            if (curr == prevInSeq) return 1;
+        }
+    }
+    return 0;
+}
+
+void onHallChange()
+{
+  uint32_t cTime = micros();
+  uint8_t a = digitalRead(HALL_A_PIN);
+  uint8_t b = digitalRead(HALL_B_PIN);
+  uint8_t c = digitalRead(HALL_C_PIN);
+  currentState = (a << 2) | (b << 1) | c;
+  if (currentState != lastState) {
+    deltaTime = cTime - lastTransitionTime;
+    lastTransitionTime = cTime;
+    int8_t d = getDirection(lastState, currentState);
+    if (d != 0) direction = d;   // keep last known direction through glitches
+    lastState = currentState;
+  }
+}
+
+// Signed mechanical motor RPM. 0 when stopped (no edge within STOP_TIMEOUT_US).
+float getMechRPM() {
+    noInterrupts();
+    uint32_t dt = deltaTime;
+    uint32_t lastEdge = lastTransitionTime;
+    int8_t dir = direction;
+    interrupts();
+    if (dt == 0 || (uint32_t)(micros() - lastEdge) > STOP_TIMEOUT_US) return 0.0f;
+    float transitionsPerSec = 1000000.0f / (float)dt;
+    float electricalRPM = (transitionsPerSec * 60.0f) / 6.0f;
+    float mechanicalRPM = electricalRPM / POLE_PAIRS;
+    return (float)(DIR_SIGN * dir) * mechanicalRPM;
+}
+
+// ------------------------------- Planar EKF -------------------------------- //
+// 5-state [x, y, theta, v, b_g]: encoder speed + IMU yaw gyro, ZUPT bias learning.
+const float TOTAL_GEAR_RATIO = 3.529f;   // 60T spur / 17T pinion (multiply in any diff ratio, or use SPEED_SCALE)
+const float WHEEL_DIAMETER_M = 0.072f;   // 72 mm drive wheel
+const float SPEED_SCALE      = 1.0f;     // roll-out trim (folds in slip + diff + pole-count error)
+
+const uint8_t GYRO_YAW_INDEX = 5;        // imuVals index for the yaw-rate axis
+const float   GYRO_TO_RADPS  = 1.0f;     // set 0.01745329f if the lib reports deg/s
+
+const float SIG_GYRO  = 0.02f;
+const float SIG_V     = 0.5f;
+const float SIG_BG    = 0.0005f;
+const float R_ENC     = 0.04f;
+const float R_ZUPT_V  = 1e-4f;
+const float R_ZUPT_BG = 1e-4f;
+const float ZUPT_RPM  = 30.0f;
+
+struct EkfState { float x, y, theta, v, bg, omega; };
+EkfState g_est = {0, 0, 0, 0, 0, 0};
+Threads::Mutex EstMutex;
+
+static inline float wrapPi(float a) {
+  while (a >  3.14159265f) a -= 6.28318531f;
+  while (a < -3.14159265f) a += 6.28318531f;
+  return a;
+}
+
+float motorRpmToSpeed(float motor_rpm) {
+  float wheel_rpm = motor_rpm / TOTAL_GEAR_RATIO;
+  return wheel_rpm * 3.14159265f * WHEEL_DIAMETER_M / 60.0f * SPEED_SCALE;
+}
+
+void EKFThread() {
+  using namespace BLA;
+  Matrix<5, 1> x = {0, 0, 0, 0, 0};
+  Matrix<5, 5> P; P.Fill(0);
+  P(0, 0) = 0.01; P(1, 1) = 0.01; P(2, 2) = 0.05; P(3, 3) = 0.25; P(4, 4) = 0.01;
+  Matrix<5, 5> I5; I5.Fill(0);
+  for (int i = 0; i < 5; i++) I5(i, i) = 1;
+  uint32_t lastUs = micros();
+
+  while (1) {
+    uint32_t now = micros();
+    float dt = (float)(now - lastUs) * 1e-6f;
+    lastUs = now;
+    if (dt <= 0.0f || dt > 0.5f) { threads.delay(5); continue; }
+
+    ImuMutex.lock();
+    float gyro_yaw = imuVals[GYRO_YAW_INDEX] * GYRO_TO_RADPS;
+    ImuMutex.unlock();
+
+    float motor_rpm = getMechRPM();
+    float v_enc = motorRpmToSpeed(motor_rpm);
+
+    float th = x(2), v = x(3), bg = x(4);
+    float omega = gyro_yaw - bg;
+    float cth = cosf(th), sth = sinf(th);
+
+    x(0) = x(0) + v * cth * dt;
+    x(1) = x(1) + v * sth * dt;
+    x(2) = wrapPi(th + omega * dt);
+
+    Matrix<5, 5> F = {1, 0, -v * sth * dt, cth * dt, 0,
+                      0, 1,  v * cth * dt, sth * dt, 0,
+                      0, 0, 1,            0,        -dt,
+                      0, 0, 0,            1,         0,
+                      0, 0, 0,            0,         1};
+    Matrix<5, 5> Q; Q.Fill(0);
+    Q(0, 0) = 1e-6; Q(1, 1) = 1e-6;
+    Q(2, 2) = (SIG_GYRO * dt) * (SIG_GYRO * dt);
+    Q(3, 3) = SIG_V * SIG_V * dt;
+    Q(4, 4) = SIG_BG * SIG_BG * dt;
+    P = F * P * ~F + Q;
+
+    {
+      Matrix<1, 5> H = {0, 0, 0, 1, 0};
+      float innov = v_enc - x(3);
+      Matrix<1, 1> S = H * P * ~H; S(0, 0) += R_ENC;
+      Matrix<5, 1> K = P * ~H * (1.0f / S(0, 0));
+      x += K * innov;
+      P = (I5 - K * H) * P;
+    }
+    if (fabsf(motor_rpm) < ZUPT_RPM) {
+      {
+        Matrix<1, 5> H = {0, 0, 0, 1, 0};
+        float innov = 0.0f - x(3);
+        Matrix<1, 1> S = H * P * ~H; S(0, 0) += R_ZUPT_V;
+        Matrix<5, 1> K = P * ~H * (1.0f / S(0, 0));
+        x += K * innov;
+        P = (I5 - K * H) * P;
+      }
+      {
+        Matrix<1, 5> H = {0, 0, 0, 0, 1};
+        float innov = gyro_yaw - x(4);
+        Matrix<1, 1> S = H * P * ~H; S(0, 0) += R_ZUPT_BG;
+        Matrix<5, 1> K = P * ~H * (1.0f / S(0, 0));
+        x += K * innov;
+        P = (I5 - K * H) * P;
+      }
+    }
+    x(2) = wrapPi(x(2));
+
+    EstMutex.lock();
+    g_est.x = x(0); g_est.y = x(1); g_est.theta = x(2);
+    g_est.v = x(3); g_est.bg = x(4);
+    g_est.omega = gyro_yaw - x(4);
+    EstMutex.unlock();
+    threads.delay(5);   // ~200 Hz
+  }
+}
+
+// ------------------------- Binary serial protocol ------------------------- //
+const uint32_t PROTO_MAGIC = 0xDEADBEEF;
+const uint8_t  PROTO_VERSION = 1;
+const uint16_t TX_PACKET_SIZE = 72;
+const uint16_t RX_PACKET_SIZE = 27;
+
+uint16_t crc16(const uint8_t* d, uint16_t n) {
+  uint16_t crc = 0xFFFF;
+  for (uint16_t i = 0; i < n; i++) {
+    crc ^= (uint16_t)d[i] << 8;
+    for (uint8_t b = 0; b < 8; b++)
+      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+  }
+  return crc;
+}
+
+// little-endian writers
+uint16_t put_u8 (uint8_t* b, uint16_t o, uint8_t v)  { b[o] = v; return o + 1; }
+uint16_t put_u16(uint8_t* b, uint16_t o, uint16_t v) { b[o] = v; b[o+1] = v >> 8; return o + 2; }
+uint16_t put_u32(uint8_t* b, uint16_t o, uint32_t v) { b[o]=v; b[o+1]=v>>8; b[o+2]=v>>16; b[o+3]=v>>24; return o + 4; }
+uint16_t put_i16(uint8_t* b, uint16_t o, int16_t v)  { return put_u16(b, o, (uint16_t)v); }
+uint16_t put_i32(uint8_t* b, uint16_t o, int32_t v)  { return put_u32(b, o, (uint32_t)v); }
+uint16_t put_f32(uint8_t* b, uint16_t o, float v)    { uint32_t u; memcpy(&u, &v, 4); return put_u32(b, o, u); }
+
+// little-endian readers
+uint16_t rd_u16(const uint8_t* b, uint16_t o) { return (uint16_t)(b[o] | (b[o+1] << 8)); }
+float rd_f32(const uint8_t* b, uint16_t o) {
+  uint32_t u = (uint32_t)b[o] | ((uint32_t)b[o+1] << 8) | ((uint32_t)b[o+2] << 16) | ((uint32_t)b[o+3] << 24);
+  float f; memcpy(&f, &u, 4); return f;
+}
+
+uint16_t writeHeader(uint8_t* b, uint16_t packetBytes) {
+  uint16_t o = 0;
+  o = put_u32(b, o, PROTO_MAGIC);
+  o = put_u8(b, o, PROTO_VERSION);
+  o = put_u8(b, o, 0);              // mcu_id
+  o = put_u16(b, o, packetBytes);  // packet_bytes
+  o = put_u32(b, o, packetBytes);  // frame_bytes
+  o = put_u16(b, o, 0);            // packet_index
+  o = put_u16(b, o, 1);            // packets_per_frame
+  return o;                        // 16
+}
+
+void sendTxPacket() {
+  uint8_t buf[TX_PACKET_SIZE];
+  uint16_t o = writeHeader(buf, TX_PACKET_SIZE);
+  o = put_i32(buf, o, (int32_t)micros());
+  ImuMutex.lock();
+  for (int i = 0; i < 9; i++) o = put_f32(buf, o, imuVals[i]);
+  ImuMutex.unlock();
+  int16_t rpm_i = (int16_t)constrain(getMechRPM(), -32768.0f, 32767.0f);
+  o = put_i16(buf, o, rpm_i);
+  EstMutex.lock();
+  float x = g_est.x, y = g_est.y, th = g_est.theta;
+  EstMutex.unlock();
+  static float lx = 0, ly = 0, lth = 0;
+  float dx = x - lx, dy = y - ly, dth = wrapPi(th - lth);
+  lx = x; ly = y; lth = th;
+  o = put_f32(buf, o, dx);
+  o = put_f32(buf, o, dy);
+  o = put_f32(buf, o, dth);
+  o = put_u16(buf, o, crc16(buf, o));   // crc over bytes [0..o-1] = 70
+  Serial1.write(buf, TX_PACKET_SIZE);
+}
+
+// RX framing buffer
+uint8_t rxbuf[128];
+uint16_t rxlen = 0;
+
+bool magicAt(const uint8_t* b) {
+  return b[0] == 0xEF && b[1] == 0xBE && b[2] == 0xAD && b[3] == 0xDE;  // 0xDEADBEEF LE
+}
+
+void pollRxParse() {
+  while (Serial1.available() && rxlen < sizeof(rxbuf)) rxbuf[rxlen++] = (uint8_t)Serial1.read();
+
+  while (rxlen >= 4) {
+    if (!magicAt(rxbuf)) { memmove(rxbuf, rxbuf + 1, --rxlen); continue; }
+    if (rxlen < RX_PACKET_SIZE) return;   // wait for the rest of the packet
+    uint16_t crcCalc = crc16(rxbuf, RX_PACKET_SIZE - 2);
+    uint16_t crcRx = rd_u16(rxbuf, RX_PACKET_SIZE - 2);
+    if (crcCalc == crcRx && rxbuf[4] == PROTO_VERSION && rd_u16(rxbuf, 6) == RX_PACKET_SIZE) {
+      float servo = rd_f32(rxbuf, 16);
+      float motor = rd_f32(rxbuf, 20);
+      uint8_t state = rxbuf[24];
+      CmdMutex.lock();
+      cmdServoDeg = servo; cmdMotorMps = motor; cmdState = state;
+      lastCmdMicros = micros();
+      CmdMutex.unlock();
+      memmove(rxbuf, rxbuf + RX_PACKET_SIZE, rxlen - RX_PACKET_SIZE);
+      rxlen -= RX_PACKET_SIZE;
+    } else {
+      memmove(rxbuf, rxbuf + 4, rxlen - 4);   // bad packet, resync past magic
+      rxlen -= 4;
+    }
+  }
+}
+
+// ------------------------- Drive control (PID + override) ------------------ //
+const uint8_t AUTO_CHANNEL = 7;          // FlySky SWB enables Pi/autonomous control. CONFIRM.
+const uint32_t CMD_TIMEOUT_US = 300000;  // stale Pi command -> fall back to RC
+const float KP_SPEED = 80.0f;            // PWM us per (m/s) error  (tune)
+const float KI_SPEED = 40.0f;
+const float KD_SPEED = 0.0f;
+const float STEER_US_PER_DEG = 15.0f;    // CALIBRATE: servo us per steering degree
+
+float speedIntegral = 0.0f, speedLastErr = 0.0f;
+
+uint16_t servoDegToUs(float deg) {
+  float us = 1500.0f + deg * STEER_US_PER_DEG;
+  return (uint16_t)constrain(us, (float)(steer_consts[0] - steer_consts[1]),
+                             (float)(steer_consts[0] + steer_consts[1]));
+}
+
+uint16_t speedPID(float target, float meas, float dt) {
+  float err = target - meas;
+  speedIntegral += err * dt;
+  speedIntegral = constrain(speedIntegral, -5.0f, 5.0f);   // anti-windup
+  float deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
+  speedLastErr = err;
+  float out = KP_SPEED * err + KI_SPEED * speedIntegral + KD_SPEED * deriv;
+  float us = 1500.0f + out;
+  return (uint16_t)constrain(us, (float)maxPWMRev, (float)maxPWMThrot);
+}
+
+// --------------------------------- Threads -----------------------------------//
+void ReadCurrAndVolt()
+{
+  I2CMutex.lock();
+  while (!INA.begin()) { ErrMutex.lock(); errorFlag = 1; ErrMutex.unlock(); }
+  I2CMutex.unlock();
+  ErrMutex.lock(); errorFlag = 0; ErrMutex.unlock();
+  I2CMutex.lock();
+  INA.setAverage(2);
+  INA.setMaxCurrentShunt(8, 0.002);
+  I2CMutex.unlock();
+  while (1) {
+    I2CMutex.lock(); powerMutex.lock();
+    power[0] = INA.getCurrent();
+    power[1] = INA.getBusVoltage();
+    power[2] = INA.getPower();
+    powerMutex.unlock(); I2CMutex.unlock();
+    threads.delay(100);
+  }
+}
+
+void ReadIMUStates()
+{
+  I2CMutex.lock();
+  while (!lsmimu.begin()) {
+    ErrMutex.lock(); errorFlag = 2;
+    Serial.println("Cannot Find LSM9DS1 IMU!! Retrying..");
+    ErrMutex.unlock();
+  }
+  I2CMutex.unlock();
+  ErrMutex.lock(); errorFlag = 0; ErrMutex.unlock();
+  I2CMutex.lock();
+  lsmimu.setupAccel(lsmimu.LSM9DS1_ACCELRANGE_8G, lsmimu.LSM9DS1_ACCELDATARATE_119HZ);
+  lsmimu.setupMag(lsmimu.LSM9DS1_MAGGAIN_8GAUSS);
+  lsmimu.setupGyro(lsmimu.LSM9DS1_GYROSCALE_500DPS);
+  I2CMutex.unlock();
+  while (1) {
+    I2CMutex.lock();
+    lsmimu.getEvent(&a, &g, &m, &temp);
+    I2CMutex.unlock();
+    ImuMutex.lock();
+    imuVals[0] = a.acceleration.x; imuVals[1] = a.acceleration.y; imuVals[2] = a.acceleration.z;
+    imuVals[3] = g.gyro.x; imuVals[4] = g.gyro.y; imuVals[5] = g.gyro.z;
+    imuVals[6] = m.magnetic.x; imuVals[7] = m.magnetic.y; imuVals[8] = m.magnetic.z;
+    ImuMutex.unlock();
+    threads.delay(2);
+  }
+}
+
+void RxReceive()
+{
+  PPMReader ppm(PPM_PIN, ChannelCount);
+  while (1) {
+    for (uint8_t i = 1; i <= ChannelCount; i++) {
+      uint16_t value = ppm.latestValidChannelValue(i, 0);
+      RxMutex.lock(); channelVals[i-1] = value; RxMutex.unlock();
+    }
+    threads.delay(1);
+  }
+}
+
+// Drive: closed-loop PID from the Pi when armed + fresh; otherwise manual RC.
+void testPWM()
+{
+  steerServo.attach(2);
+  throtMot.attach(3);
+  steerServo.writeMicroseconds(steer_consts[0]);
+  throtMot.writeMicroseconds(throt_consts[0]);
+
+  uint32_t lastUs = micros();
+  while (1) {
+    uint32_t now = micros();
+    float dt = (float)(now - lastUs) * 1e-6f;
+    lastUs = now;
+
+    RxMutex.lock();
+    uint16_t swEnable = channelVals[AUTO_CHANNEL];
+    uint16_t rcSteer = channelVals[0];
+    uint16_t rcThrottle = channelVals[2];
+    RxMutex.unlock();
+
+    CmdMutex.lock();
+    float servoDeg = cmdServoDeg;
+    float tgtMps = cmdMotorMps;
+    CmdMutex.unlock();
+
+    bool autoMode = (swEnable > 1500);
+
+    if (autoMode) {
+      cmds[0] = servoDegToUs(servoDeg);
+      float measMps = motorRpmToSpeed(getMechRPM());
+      cmds[1] = speedPID(tgtMps, measMps, dt);
+    } else {
+      // Manual RC. Reset the PID so it does not wind up while idle.
+      speedIntegral = 0.0f; speedLastErr = 0.0f;
+      cmds[0] = rcSteer;
+      if (rcThrottle > 1525) {
+        cmds[1] = map(rcThrottle, 1500, 2000, 1575, maxPWMThrot);
+      } else if (rcThrottle < 1475) {
+        cmds[1] = map(rcThrottle, 1000, 1500, maxPWMRev, 1475);
+      } else {
+        cmds[1] = 1500;
+      }
+      cmds[1] = constrain(cmds[1], maxPWMRev, maxPWMThrot);
+    }
+
+    steerServo.writeMicroseconds(cmds[0]);
+    throtMot.writeMicroseconds(cmds[1]);
+    threads.delay(2);
+  }
+}
+
+// Serial1 link to the Pi: parse RX commands, stream TX telemetry @ ~100 Hz.
+void PiUART()
+{
+  Serial1.begin(230400);
+  uint32_t lastTx = micros();
+  while (1) {
+    pollRxParse();
+    if ((uint32_t)(micros() - lastTx) >= 10000) {   // 100 Hz
+      lastTx += 10000;
+      sendTxPacket();
+    }
+    threads.delay(2);
+  }
+}
+
+void DotMatrix()
+{
+  SPIMutex.lock();
+  mx.begin(); mx.setIntensity(8); mx.displayClear();
+  SPIMutex.unlock();
+  while (1) {
+    char msgbuf[16];
+    SPIMutex.lock();
+    mx.displayClear(); mx.flush();
+    powerMutex.lock(); dtostrf(power[0], 5, 2, msgbuf); powerMutex.unlock();
+    mx.displayText(msgbuf, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+    mx.displayAnimate();
+    SPIMutex.unlock();
+    threads.delay(100);
+  }
+}
+
+void DebugUsingSerial()
+{
+  while (1) {
+    CmdMutex.lock();
+    Serial.println("ServoDeg: " + String(cmdServoDeg) + "  MotorMps: " + String(cmdMotorMps));
+    CmdMutex.unlock();
+    Serial.println("RPM: " + String(getMechRPM()) + "  Dir: " + String(direction));
+    threads.delay(50);
+  }
+}
+
+void ledStuffs()
+{
+  powerMutex.lock();
+  numleds = map(power[1]*100, 700, 840, 0, 42);
+  powerMutex.unlock();
+  for (int i = 0; i < numleds; i++) {
+    leds[i] = ColorFromPalette(currrentPalette, colorIdx, BRIGHTNESS, LINEARBLEND);
+    leds[83-i] = ColorFromPalette(currrentPalette, colorIdx, BRIGHTNESS, LINEARBLEND);
+    colorIdx++;
+  }
+  threads.delay(5);
+  FastLED.show();
+  for (int i = 0; i < NUM_LEDS; i++) leds[i] = CRGB::Black;
+}
+
+void setup()
+{
+  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.setBrightness(BRIGHTNESS);
+  Wire.begin();
+  Serial.begin(230400);
+  SPI.begin();
+
+  pinMode(HALL_A_PIN, INPUT);
+  pinMode(HALL_B_PIN, INPUT);
+  pinMode(HALL_C_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(HALL_A_PIN), onHallChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(HALL_B_PIN), onHallChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(HALL_C_PIN), onHallChange, CHANGE);
+
+  threads.addThread(testPWM);
+  threads.addThread(PiUART);
+  threads.addThread(RxReceive);
+  threads.addThread(DebugUsingSerial);
+  threads.addThread(ReadCurrAndVolt);
+  threads.addThread(ReadIMUStates);
+  threads.addThread(DotMatrix);
+  threads.addThread(EKFThread);
+  delay(2000);
+}
+
+void loop()
+{
+  ledStuffs();
+  threads.delay(50);
+}
