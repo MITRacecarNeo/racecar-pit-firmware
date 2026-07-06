@@ -555,12 +555,15 @@ void DotMatrix()
 
     if(pi_dm)
     {
-      // Render the Pi's 8x24 bitmap directly (row-major, 1 = LED on).
+      // Render the Pi's 8x24 bitmap directly (row-major, 1 = LED on). The raw
+      // setPoint column axis runs opposite to the MD_Parola text engine, so
+      // reverse it to match the splash/glyph orientation (else text mirrors).
+      const uint16_t W = 8 * cfg::MAX_7219_DOT_MATRIX::num_matrix;
       SPIMutex.lock();
       gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
       for(uint8_t r = 0; r < 8; r++)
-        for(uint8_t c = 0; c < 24; c++)
-          gfx->setPoint(r, c, bmp[r * 24 + c]);
+        for(uint16_t c = 0; c < W; c++)
+          gfx->setPoint(r, (W - 1) - c, bmp[r * W + c]);
       gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
       SPIMutex.unlock();
       wasPi = true;
