@@ -25,6 +25,7 @@ RxPacket rxPacketPing, rxPacketPong;
 
 uint32_t magicNumRx;
 uint8_t window[4] = {0, 0, 0, 0};
+volatile uint32_t lastRxTime = 0;
 
 // --------------------------- RGB LED ---------------------------- //
 CRGB leds[cfg::RGB_LED_WS2812B::num_leds];
@@ -89,24 +90,53 @@ Threads::Mutex SerMutex;                // for use with Serial1
 
 // -------------------- functions ------------------------ //
 
+// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection). Matches the
+// Pi driver's pit_protocol.crc16_ccitt so both ends agree on the checksum.
+uint16_t crc16_ccitt(const uint8_t* data, size_t len, uint16_t crc)
+{
+  for(size_t i = 0; i < len; i++)
+  {
+    crc ^= (uint16_t)data[i] << 8;
+    for(uint8_t b = 0; b < 8; b++)
+    {
+      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    }
+  }
+  return crc;
+}
+
 void fillTxBuff()
 {
   while(1)
   {
+    // Snapshot each source under its own lock, then commit to the packet under
+    // TransmitMutex so UARTTx never copies a half-written frame.
+    uint16_t rc_local[cfg::FLYSKY_IA6B_RX::channel_count];
+    float    imu_local[9];
+    float    curr, volt;
+
     RxMutex.lock();
-    memcpy(&txPacketPing.RxReceiver, &channelVals, sizeof(channelVals));
+    memcpy(rc_local, channelVals, sizeof(rc_local));
     RxMutex.unlock();
 
+    ImuMutex.lock();
+    memcpy(imu_local, imuVals, sizeof(imu_local));
+    ImuMutex.unlock();
+
+    PowerMutex.lock();
+    curr = power[0];
+    volt = power[1];
+    PowerMutex.unlock();
+
     TransmitMutex.lock();
-    txPacketPing.Encoder = lastRPM;
+    memcpy(txPacketPing.RxReceiver, rc_local, sizeof(rc_local));
+    memcpy(txPacketPing.IMU, imu_local, sizeof(imu_local));
+    txPacketPing.VoltAndCurr[0] = (uint16_t)(volt * 1000.0f);           // bus voltage, mV
+    txPacketPing.VoltAndCurr[1] = (uint16_t)(curr < 0.0f ? 0.0f : curr); // current, raw INA226 counts
+    txPacketPing.Encoder        = lastRPM;
+    txPacketPing.Timestamp      = (int32_t)micros();
     TransmitMutex.unlock();
-    
-    // Serial.print(String(sizeof(txPacketPing)) + "\t");
-    // for (uint8_t i=0; i<sizeof(txPacketPing.RxReceiver)/sizeof(txPacketPing.RxReceiver[0]); i++)
-    // {
-    //   Serial.print(String(txPacketPing.RxReceiver[i]) + "|");  
-    // }
-    // Serial.println();
+
     threads.delay(1);
   }
 }
@@ -122,6 +152,9 @@ void UARTTx()
       //(where it needs to go, what needs to go there, size of what needs to go)
       memcpy(&txPacketPong, &txPacketPing, sizeof(txPacketPing));
       TransmitMutex.unlock();
+      // Checksum the exact bytes going on the wire: whole packet up to the
+      // trailing 2-byte Checksum field (magic included).
+      txPacketPong.Checksum = crc16_ccitt((const uint8_t *)&txPacketPong, sizeof(TXPacket) - 2);
       Serial1.write((byte *)&txPacketPong, sizeof(txPacketPong));
       lastTime = micros();
     }
@@ -134,10 +167,14 @@ void UARTTx()
 void fillRxData()
 {
   RecPongMutex.lock();
-  cmd_setpoint[0] = rxPacketPong.ServoAng;
-  cmd_setpoint[1] = rxPacketPong.MotorSpeed;
+  float servo = rxPacketPong.ServoAng;
+  float motor = rxPacketPong.MotorSpeed;
   RecPongMutex.unlock();
-  // Serial.println(String(cmd_setpoint[0]) + "\t" + String(cmd_setpoint[1]));
+
+  CmdMutex.lock();
+  cmd_setpoint[0] = servo;
+  cmd_setpoint[1] = motor;
+  CmdMutex.unlock();
 }
 
 void UARTRx()
@@ -159,10 +196,22 @@ void UARTRx()
       {
         // Serial.println("BEEF DEAD");
         Serial1.readBytes((byte *)&rxPacketPing, sizeof(rxPacketPing));
-        RecPongMutex.lock();
-        memcpy(&rxPacketPong, &rxPacketPing, sizeof(rxPacketPong));
-        RecPongMutex.unlock();
-        fillRxData();
+
+        // CRC over the wire bytes: 4 magic bytes + body up to the trailing
+        // 2-byte Checksum field. magicLE is little-endian on the Teensy, so
+        // its bytes match the on-wire magic order.
+        uint32_t magicLE = cfg::UART::rx_magic_num;
+        uint16_t crc = crc16_ccitt((const uint8_t *)&magicLE, sizeof(magicLE));
+        crc = crc16_ccitt((const uint8_t *)&rxPacketPing, sizeof(RxPacket) - 2, crc);
+
+        if(!cfg::UART::verify_rx_crc || crc == rxPacketPing.Checksum)
+        {
+          RecPongMutex.lock();
+          memcpy(&rxPacketPong, &rxPacketPing, sizeof(rxPacketPong));
+          RecPongMutex.unlock();
+          fillRxData();
+          lastRxTime = micros();
+        }
       }
     }
     RecieveMutex.unlock();
@@ -208,21 +257,22 @@ void onHallChange()
 }
 
 void getRPM() {
-    if (deltaTime == 0) lastRPM = 0;
-    
     noInterrupts();
     uint32_t dt = deltaTime;
+    uint32_t lastT = lastTransitionTime;
     interrupts();
 
-    float transitionsPerSec = 1000000.0 / dt;
-    float electricalRPM = (transitionsPerSec * 60.0) / 6.0;
-    float mechanicalRPM = electricalRPM / 2;
-    // Serial.println(mechanicalRPM);
-
-    if(mechanicalRPM == lastRPM)
+    // No hall edge within the timeout -> wheel stopped. Without this, deltaTime
+    // holds its last value forever and the encoder reports a ghost speed.
+    if(dt == 0 || (micros() - lastT) > cfg::ES2845S_4900KV_MOTOR::stop_timeout_us)
     {
       lastRPM = 0;
+      return;
     }
+
+    float transitionsPerSec = 1000000.0f / dt;
+    float electricalRPM = (transitionsPerSec * 60.0f) / 6.0f;
+    float mechanicalRPM = electricalRPM / 2.0f;
     lastRPM = mechanicalRPM;
 }
 
@@ -310,7 +360,7 @@ void ReadIMUStates()
   while(1)
   {
     I2CMutex.lock();
-    lsmimu.getEvent(&a, &g, &m, &temp);
+    lsmimu.getEvent(&a, &m, &g, &temp);   // (accel, mag, gyro, temp)
     I2CMutex.unlock();
 
     ImuMutex.lock();
@@ -356,39 +406,99 @@ void testPWM()
   throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::throt_center);
 
   while(1)
-  {    
+  {
+    uint16_t ch[cfg::FLYSKY_IA6B_RX::channel_count];
     RxMutex.lock();
-    cmd_pwm[0] = channelVals[0]; //Steering
-    
-    if(cfg::ESC_10BL60_G2::speed_demon)
-    {
-      drive_mode_sw = (channelVals[4] < 1500) ? true : false;
-      if(drive_mode_sw)
-      {
-        cmd_pwm[1] = map(channelVals[2], 1000, 2000, 1500, 750);
-      } else {
-        cmd_pwm[1] = map(channelVals[2], 1000, 2000, 1500, 2250);
-      }
-    } else 
-    {
-      //Throttle deadzone 1140 < 1500 < 1575
-      if(channelVals[2] > 1525)
-      {
-        cmd_pwm[1] = map(channelVals[2], 1500, 2000, 1575, max_pwm_throt);
-      } else if (channelVals[2] < 1475)
-      {
-        cmd_pwm[1] = map(channelVals[2], 1000, 1500, max_pwm_rev, 1475);
-      } else {
-        cmd_pwm[1] = 1500;
-      }
-      cmd_pwm[1] = (cmd_pwm[1] > max_pwm_throt) ? max_pwm_throt : cmd_pwm[1];
-      cmd_pwm[1] = (cmd_pwm[1] < max_pwm_rev) ? max_pwm_rev : cmd_pwm[1];
-    }
-
+    memcpy(ch, channelVals, sizeof(ch));
     RxMutex.unlock();
 
+    // Is a live RC signal present on the sticks we read?
+    bool rc_signal = (ch[0] >= cfg::AUTO_DRIVE::rc_valid_min && ch[0] <= cfg::AUTO_DRIVE::rc_valid_max) &&
+                     (ch[2] >= cfg::AUTO_DRIVE::rc_valid_min && ch[2] <= cfg::AUTO_DRIVE::rc_valid_max);
+
+    float rc_steer = cfg::SERVO_D135F::steer_center;
+    float rc_throt = cfg::ESC_10BL60_G2::throt_center;
+    bool  rc_active = false;
+    bool  pi_drive = false;   // true only when the Pi command drives the throttle
+
+    if(rc_signal)
+    {
+      // What the RC transmitter would command (the manual mapping).
+      rc_steer = ch[0];
+
+      if(cfg::ESC_10BL60_G2::speed_demon)
+      {
+        drive_mode_sw = (ch[4] < 1500) ? true : false;
+        rc_throt = drive_mode_sw ? map(ch[2], 1000, 2000, 1500, 750)
+                                 : map(ch[2], 1000, 2000, 1500, 2250);
+      }
+      else
+      {
+        //Throttle deadzone 1140 < 1500 < 1575
+        if(ch[2] > 1525)      rc_throt = map(ch[2], 1500, 2000, 1575, max_pwm_throt);
+        else if(ch[2] < 1475) rc_throt = map(ch[2], 1000, 1500, max_pwm_rev, 1475);
+        else                  rc_throt = 1500;
+        rc_throt = (rc_throt > max_pwm_throt) ? max_pwm_throt : rc_throt;
+        rc_throt = (rc_throt < max_pwm_rev)   ? max_pwm_rev   : rc_throt;
+      }
+
+      // Human is driving if either stick output leaves its neutral band.
+      rc_active =
+        (fabsf(rc_throt - cfg::ESC_10BL60_G2::throt_center) > cfg::AUTO_DRIVE::throt_override_band) ||
+        (fabsf(rc_steer - cfg::SERVO_D135F::steer_center)   > cfg::AUTO_DRIVE::steer_override_band);
+    }
+
+    if(rc_active)
+    {
+      // RC override: the transmitter has priority over the Pi.
+      cmd_pwm[0] = rc_steer;
+      cmd_pwm[1] = rc_throt;
+    }
+    else
+    {
+      // Fallback to the Pi: sticks centered, or no receiver. Actuate a fresh
+      // command (normalized [-1,1] passthrough); neutral if the Pi is silent.
+      bool fresh = (lastRxTime != 0) &&
+                   ((micros() - lastRxTime) < (cfg::UART::rx_timeout * 1000UL));
+
+      if(fresh)
+      {
+        CmdMutex.lock();
+        float servo = cmd_setpoint[0];
+        float motor = cmd_setpoint[1];
+        CmdMutex.unlock();
+
+        servo = constrain(servo, -1.0f, 1.0f);
+        motor = constrain(motor, -1.0f, 1.0f);
+
+        cmd_pwm[0] = cfg::SERVO_D135F::steer_center + servo * cfg::SERVO_D135F::steer_mag * cfg::AUTO_DRIVE::steer_limit;
+        cmd_pwm[1] = cfg::ESC_10BL60_G2::throt_center - motor * cfg::ESC_10BL60_G2::throt_mag * cfg::AUTO_DRIVE::throt_limit;
+        pi_drive = true;
+      }
+      else
+      {
+        cmd_pwm[0] = cfg::SERVO_D135F::steer_center;
+        cmd_pwm[1] = cfg::ESC_10BL60_G2::throt_center;
+      }
+    }
+
+    // Steering actuates immediately. The Pi's throttle ramps toward the target
+    // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
+    // directly, so a human override and the stale-command stop are both instant.
+    static float throt_out = cfg::ESC_10BL60_G2::throt_center;
+    if(pi_drive)
+    {
+      float d = cmd_pwm[1] - throt_out;
+      float step = cfg::ESC_10BL60_G2::throt_slew_us;
+      throt_out += (d > step) ? step : (d < -step ? -step : d);
+    }
+    else
+    {
+      throt_out = cmd_pwm[1];
+    }
+
     steerServo.writeMicroseconds(cmd_pwm[0]);
-    throtMot.writeMicroseconds(cmd_pwm[1]);
+    throtMot.writeMicroseconds(throt_out);
 
     threads.delay(1);
   }

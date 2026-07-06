@@ -42,6 +42,11 @@ void setup()
   Wire.begin();
   Serial.begin(115200);
   Serial1.begin(cfg::UART::baud_rate);
+  // The default 64-byte RX FIFO overflows mid-frame: a 474-byte command at
+  // 921600 baud fills 64 bytes in ~0.7 ms, but UARTRx can be preempted longer
+  // than that under the thread scheduler. Hold several full frames instead.
+  static uint8_t serial1_rx_buf[2048];
+  Serial1.addMemoryForRead(serial1_rx_buf, sizeof(serial1_rx_buf));
   SPI.begin();
 
   // ----------------- setup hall sensing pins as input interrupts --------- //

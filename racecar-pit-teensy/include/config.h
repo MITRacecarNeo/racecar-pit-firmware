@@ -12,6 +12,7 @@ namespace cfg {
         constexpr uint16_t  tx_freq                 = 200;              // Hz
         constexpr uint16_t  rx_freq                 = 60;               // Hz
         constexpr uint32_t  rx_timeout              = 50;               // ms
+        constexpr bool      verify_rx_crc           = true;             // drop command frames failing CRC-16
     }
 
     namespace RGB_LED_WS2812B {
@@ -28,7 +29,8 @@ namespace cfg {
         constexpr float     percentRev              = 0.25;
 
         constexpr uint16_t  throt_center            = 1500;             // us
-        constexpr uint16_t  throt_mag               = 750;              // us 
+        constexpr uint16_t  throt_mag               = 750;              // us
+        constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
     }
 
     namespace SERVO_D135F {
@@ -72,6 +74,21 @@ namespace cfg {
         constexpr uint8_t   hall_b_pin                  = 31;
         constexpr uint8_t   hall_c_pin                  = 32;
         constexpr uint8_t   mot_temp_pin                = A17;
+        constexpr uint32_t  stop_timeout_us             = 100000;           // no hall edge in this window -> RPM 0
+    }
+
+    namespace AUTO_DRIVE {
+        // Drive priority: the RC transmitter overrides the Pi whenever a stick
+        // leaves its neutral band. With the sticks centered (or no receiver),
+        // the Pi command stream drives as the fallback.
+        constexpr float     throt_limit                 = 0.25;             // Pi authority: fraction of throt_mag
+        constexpr float     steer_limit                 = 1.0;              // Pi authority: fraction of steer_mag
+        // RC-active detection: |RC-commanded PWM - center| beyond this -> human driving.
+        constexpr uint16_t  throt_override_band         = 40;               // us around throt_center
+        constexpr uint16_t  steer_override_band         = 40;               // us around steer_center
+        // Plausible RC pulse band; outside it the receiver is treated as absent.
+        constexpr uint16_t  rc_valid_min                = 900;              // us
+        constexpr uint16_t  rc_valid_max                = 2100;             // us
     }
 
     namespace TEENSY_THREADS {
