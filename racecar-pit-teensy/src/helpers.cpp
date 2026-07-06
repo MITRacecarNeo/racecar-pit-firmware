@@ -360,7 +360,7 @@ void ReadIMUStates()
   while(1)
   {
     I2CMutex.lock();
-    lsmimu.getEvent(&a, &g, &m, &temp);
+    lsmimu.getEvent(&a, &m, &g, &temp);   // (accel, mag, gyro, temp)
     I2CMutex.unlock();
 
     ImuMutex.lock();
