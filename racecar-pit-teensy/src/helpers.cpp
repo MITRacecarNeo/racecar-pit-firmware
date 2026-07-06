@@ -604,22 +604,25 @@ void ledStuffs()
 {
   const int N = cfg::RGB_LED_WS2812B::num_leds;
 
-  // Detect the Pi driver coming up (command freshness rising edge) to kick off
-  // the one-shot rainbow "loading" sweep.
-  static uint32_t load_start = 0;
-  static bool     pi_was_fresh = false;
-  bool fresh = (lastRxTime != 0) &&
-               ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
-  if(fresh && !pi_was_fresh) load_start = millis();
-  pi_was_fresh = fresh;
-  bool loading = (load_start != 0) && ((millis() - load_start) < cfg::DISP::led_load_ms);
-
   uint8_t state;
   static uint8_t local_led[cfg::RGB_LED_WS2812B::num_leds * 3];
   CmdMutex.lock();
   memcpy(local_led, led_cmd, sizeof(local_led));
   state = system_state;
   CmdMutex.unlock();
+
+  bool fresh = (lastRxTime != 0) &&
+               ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
+
+  // The rainbow "loading" sweep plays only while the Pi asserts driver_starting
+  // (held for ~led_load_ms right after the driver launches). Booting the Teensy
+  // into an already-running Pi leaves the flag clear -> straight to red idle.
+  static uint32_t load_start = 0;
+  static bool     was_starting = false;
+  bool starting = fresh && (state & cfg::SYS_STATE::driver_starting);
+  if(starting && !was_starting) load_start = millis();
+  was_starting = starting;
+  bool loading = starting;
 
   for(int i = 0; i < N; i++) leds[i] = CRGB::Black;
 

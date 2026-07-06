@@ -111,6 +111,7 @@ namespace cfg {
         constexpr uint8_t   mode_auto                   = 2;
         constexpr uint8_t   dotmatrix_active            = 0x04;             // Pi is commanding the dot matrix
         constexpr uint8_t   led_active                  = 0x08;             // Pi is commanding the LED strip
+        constexpr uint8_t   driver_starting             = 0x10;             // Pi driver just launched: play the LED loading sweep
     }
 
     namespace TEENSY_THREADS {
