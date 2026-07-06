@@ -19,6 +19,7 @@ extern TXPacket txPacketPing, txPacketPong;
 extern RxPacket rxPacketPing, rxPacketPong;
 extern uint32_t magicNumRx;
 extern uint8_t window[4];
+extern volatile uint32_t lastRxTime;   // micros() of the last CRC-valid Pi command
 
 // --------------------------- RGB LED ---------------------------- //
 extern CRGB leds[cfg::RGB_LED_WS2812B::num_leds];
@@ -66,6 +67,8 @@ float getCurrentSpeed();
 void InnerControlLoop();
 
 // ------ UART -------- //
+uint16_t crc16_ccitt(const uint8_t* data, size_t len, uint16_t crc = 0xFFFF);
+
 void UARTTx();
 void fillTxBuff();
 
