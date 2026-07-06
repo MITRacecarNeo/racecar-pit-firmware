@@ -25,13 +25,17 @@ void setup()
   initRxHeader(rxPacketPong.header);
 
   // -------------------------- set PWM bounds ----------------------------- //
+  // RC-manual endpoints. speed_demon uses the full configured range; otherwise
+  // the percent* scalars trim the throw around neutral.
   if(cfg::ESC_10BL60_G2::speed_demon)
   {
-    max_pwm_throt = cfg::ESC_10BL60_G2::throt_center + cfg::ESC_10BL60_G2::throt_mag;
-    max_pwm_rev  = cfg::ESC_10BL60_G2::throt_center - cfg::ESC_10BL60_G2::throt_mag;
+    max_pwm_throt = cfg::ESC_10BL60_G2::speed_pwm_max;
+    max_pwm_rev   = cfg::ESC_10BL60_G2::speed_pwm_min;
   } else {
-    max_pwm_throt = cfg::ESC_10BL60_G2::throt_center + cfg::ESC_10BL60_G2::throt_mag * cfg::ESC_10BL60_G2::percentThrot;
-    max_pwm_rev   = cfg::ESC_10BL60_G2::throt_center - cfg::ESC_10BL60_G2::throt_mag * cfg::ESC_10BL60_G2::percentRev;
+    max_pwm_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral +
+                    (cfg::ESC_10BL60_G2::speed_pwm_max - cfg::ESC_10BL60_G2::speed_pwm_neutral) * cfg::ESC_10BL60_G2::percentThrot;
+    max_pwm_rev   = cfg::ESC_10BL60_G2::speed_pwm_neutral -
+                    (cfg::ESC_10BL60_G2::speed_pwm_neutral - cfg::ESC_10BL60_G2::speed_pwm_min) * cfg::ESC_10BL60_G2::percentRev;
   }
   
   // ------------------------- setup WS2182B RGB LED Strip ----------------- //
