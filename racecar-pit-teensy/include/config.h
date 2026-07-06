@@ -29,7 +29,8 @@ namespace cfg {
         constexpr float     percentRev              = 0.25;
 
         constexpr uint16_t  throt_center            = 1500;             // us
-        constexpr uint16_t  throt_mag               = 750;              // us 
+        constexpr uint16_t  throt_mag               = 750;              // us
+        constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
     }
 
     namespace SERVO_D135F {

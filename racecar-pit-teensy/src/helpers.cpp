@@ -419,6 +419,7 @@ void testPWM()
     float rc_steer = cfg::SERVO_D135F::steer_center;
     float rc_throt = cfg::ESC_10BL60_G2::throt_center;
     bool  rc_active = false;
+    bool  pi_drive = false;   // true only when the Pi command drives the throttle
 
     if(rc_signal)
     {
@@ -472,6 +473,7 @@ void testPWM()
 
         cmd_pwm[0] = cfg::SERVO_D135F::steer_center + servo * cfg::SERVO_D135F::steer_mag * cfg::AUTO_DRIVE::steer_limit;
         cmd_pwm[1] = cfg::ESC_10BL60_G2::throt_center - motor * cfg::ESC_10BL60_G2::throt_mag * cfg::AUTO_DRIVE::throt_limit;
+        pi_drive = true;
       }
       else
       {
@@ -480,8 +482,23 @@ void testPWM()
       }
     }
 
+    // Steering actuates immediately. The Pi's throttle ramps toward the target
+    // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
+    // directly, so a human override and the stale-command stop are both instant.
+    static float throt_out = cfg::ESC_10BL60_G2::throt_center;
+    if(pi_drive)
+    {
+      float d = cmd_pwm[1] - throt_out;
+      float step = cfg::ESC_10BL60_G2::throt_slew_us;
+      throt_out += (d > step) ? step : (d < -step ? -step : d);
+    }
+    else
+    {
+      throt_out = cmd_pwm[1];
+    }
+
     steerServo.writeMicroseconds(cmd_pwm[0]);
-    throtMot.writeMicroseconds(cmd_pwm[1]);
+    throtMot.writeMicroseconds(throt_out);
 
     threads.delay(1);
   }
