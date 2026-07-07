@@ -54,7 +54,7 @@ The ESC ignores an instant forward step from neutral, so the Pi throttle slews t
 
 ## Telemetry
 
-`fillTxBuff` packs the LSM9DS1 (9 axes via `getEvent(accel, mag, gyro)`), INA226 bus voltage and current, and a microsecond timestamp. `getRPM` zeroes the encoder after a hall-transition timeout (`stop_timeout_us`, 100 ms) instead of reporting a ghost speed from a stale interval.
+`fillTxBuff` packs the LSM9DS1 (9 axes via `getEvent(accel, mag, gyro)`), INA226 bus voltage (mV) and current (mA), the eight FlySky RC channels (raw pulse widths, us), and a microsecond timestamp. Current is packed as mA rather than truncated amps so sub-amp resolution survives the `uint16`. `getRPM` zeroes the encoder after a hall-transition timeout (`stop_timeout_us`, 100 ms) instead of reporting a ghost speed from a stale interval.
 
 ## Build and flash
 
