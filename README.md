@@ -2,7 +2,7 @@
 
 Teensy 4.1 firmware for the NEO-PIT drive PCB on the RACECAR Neo V2, plus the Pi-side UART reference. The board replaces the Pololu Maestro and absorbs the servo, ESC, LSM9DS1 IMU, INA226 power sensor, hall encoder, MAX7219 dot matrix, WS2812B strips, and FlySky iA6B RC receiver. The Pi speaks a binary UART protocol to the Teensy and sends normalized drive commands; the Teensy maps them to servo/ESC PWM and streams telemetry back.
 
-Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.4.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
+Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.5.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
 
 ## Contents
 
