@@ -505,7 +505,8 @@ void testPWM()
     // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
     // directly, so a human override and the stale-command stop are both instant.
     static float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
-    if(pi_drive)
+    bool rev_cmd = cmd_pwm[1] < cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    if(pi_drive && !(cfg::ESC_10BL60_G2::rev_snap && rev_cmd))
     {
       float d = cmd_pwm[1] - throt_out;
       float step = cfg::ESC_10BL60_G2::throt_slew_us;
