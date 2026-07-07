@@ -2,7 +2,7 @@
 
 Teensy 4.1 firmware for the NEO-PIT drive PCB on the RACECAR Neo V2, plus the Pi-side UART reference. The board replaces the Pololu Maestro and absorbs the servo, ESC, LSM9DS1 IMU, INA226 power sensor, hall encoder, MAX7219 dot matrix, WS2812B strips, and FlySky iA6B RC receiver. The Pi speaks a binary UART protocol to the Teensy and sends normalized drive commands; the Teensy maps them to servo/ESC PWM and streams telemetry back.
 
-Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.3.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
+Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.4.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
 
 ## Contents
 
@@ -47,10 +47,10 @@ Telemetry carries a microsecond timestamp, INA226 bus voltage and current, the F
 Normalized `[-1, 1]` passthrough: the Pi sends normalized command, the Teensy maps to PWM open-loop. Actuation follows an RC-priority, Pi-fallback model with no arm switch:
 
 - The RC transmitter overrides the Pi whenever a stick's mapped PWM leaves its neutral band (`throt_override_band` / `steer_override_band`, 40 us), gated on a valid receiver signal so a dropped or absent receiver never engages RC.
-- With the sticks centered or no receiver, a fresh Pi command drives via passthrough (`throt_limit` 0.25 for bring-up, `steer_limit` 1.0), otherwise neutral.
+- With the sticks centered or no receiver, a fresh Pi command drives via passthrough, otherwise neutral. The Teensy owns the physical PWM limits: a normalized `[-1, 1]` command maps piecewise across `speed_pwm_min`/`speed_pwm_neutral`/`speed_pwm_max` (and `angle_pwm_*` for steering), so the Pi sends the full range and tightens the bounds here to protect the drivetrain.
 - A command stale past `rx_timeout` (50 ms) falls to neutral. A dropped or absent receiver holds neutral instead of extrapolating to full reverse.
 
-The ESC ignores an instant throttle step from neutral, so the Pi throttle slews toward its target (`throt_slew_us`); steering and the neutral failsafe stay instant, and the RC path is human-ramped.
+The ESC ignores an instant forward step from neutral, so the Pi throttle slews toward a forward target (`throt_slew_us`); steering and the neutral failsafe stay instant, and the RC path is human-ramped. A slow slew *into* reverse reads as brake on this forward/brake/reverse ESC and never latches, so a Pi reverse command snaps straight to the reverse endpoint (`rev_snap`); `speed_pwm_min` sits deeper than a symmetric forward throw to clear the reverse deadband.
 
 ## Telemetry
 
@@ -71,7 +71,7 @@ PlatformIO with the Teensy platform. From `racecar-pit-teensy/`:
 
 Bench (wheels up, driving the Teensy directly over the GPIO UART): telemetry CRC 537/537 valid, accelerometer reads gravity, gyro and mag return real values, bus voltage 7.9 V, encoder and timestamp populate. Steering actuates, and a Pi throttle command ramps the motor to about 35k rpm with the encoder confirming rotation.
 
-On-robot end-to-end (2026-07-06, wheels up): with the full ROS stack up, the LSM9DS1 streams to `/imu/lsm9ds1` at 151 Hz (accel z about -9.66) with no CRC or resync errors, and an Xbox controller drives the car through the mux to the ESC and servo at the configured limits.
+On-robot end-to-end (2026-07-06, wheels up): with the full ROS stack up, the LSM9DS1 streams to `/imu/lsm9ds1` at 151 Hz (accel z about -9.66) with no CRC or resync errors, and an Xbox controller drives the car through the mux to the ESC and servo at the configured limits. Forward and reverse both actuate (reverse via `rev_snap`); drive and steering polarity are corrected on the Pi side (`pit.yaml` `speed_sign`/`steering_sign` = -1), and the dot-matrix glyph and LED strip respond to controller input.
 
 ## License
 
