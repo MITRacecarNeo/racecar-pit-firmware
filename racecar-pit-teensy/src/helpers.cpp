@@ -33,6 +33,11 @@ CRGBPalette16 currrentPalette = RainbowStripeColors_p;
 uint8_t colorIdx = 1;
 uint8_t numleds;
 
+// ------------------- Display command from Pi -------------------- //
+bool    dotmatrix_cmd[192] = {false};
+uint8_t led_cmd[cfg::RGB_LED_WS2812B::num_leds * 3] = {0};
+uint8_t system_state = 0;
+
 // -------------- Servo and Motor ------------ //
 Servo steerServo, throtMot;
 float cmd_setpoint[2];
@@ -133,7 +138,7 @@ void fillTxBuff()
     memcpy(txPacketPing.IMU, imu_local, sizeof(imu_local));
     txPacketPing.VoltAndCurr[0] = (uint16_t)(volt * 1000.0f);           // bus voltage, mV
     txPacketPing.VoltAndCurr[1] = (uint16_t)(curr < 0.0f ? 0.0f : curr); // current, raw INA226 counts
-    txPacketPing.Encoder        = lastRPM;
+    txPacketPing.Encoder        = getCurrentSpeed();                    // vehicle speed, m/s
     txPacketPing.Timestamp      = (int32_t)micros();
     TransmitMutex.unlock();
 
@@ -164,17 +169,29 @@ void UARTTx()
 
 }
 
+// Map a normalized [-1,1] command to PWM microseconds, piecewise about neutral.
+uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi)
+{
+  n = constrain(n, -1.0f, 1.0f);
+  float pwm = (n >= 0.0f) ? (neu + n * ((float)hi - (float)neu))
+                          : (neu + n * ((float)neu - (float)lo));
+  return (uint16_t)constrain(pwm, (float)lo, (float)hi);
+}
+
 void fillRxData()
 {
   RecPongMutex.lock();
-  float servo = rxPacketPong.ServoAng;
-  float motor = rxPacketPong.MotorSpeed;
-  RecPongMutex.unlock();
-
+  float   servo = rxPacketPong.ServoAng;
+  float   motor = rxPacketPong.MotorSpeed;
+  uint8_t state = rxPacketPong.SystemState;
   CmdMutex.lock();
   cmd_setpoint[0] = servo;
   cmd_setpoint[1] = motor;
+  memcpy(dotmatrix_cmd, rxPacketPong.DotMatrix, sizeof(dotmatrix_cmd));
+  memcpy(led_cmd, rxPacketPong.LED, sizeof(led_cmd));
+  system_state = state;
   CmdMutex.unlock();
+  RecPongMutex.unlock();
 }
 
 void UARTRx()
@@ -399,11 +416,11 @@ void RxReceive()
 
 void testPWM()
 {  
-  steerServo.attach(2);
-  throtMot.attach(3);
+  steerServo.attach(cfg::SERVO_D135F::servo_pin);
+  throtMot.attach(cfg::ESC_10BL60_G2::motor_pin);
 
-  steerServo.writeMicroseconds(cfg::SERVO_D135F::steer_center);
-  throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::throt_center);
+  steerServo.writeMicroseconds(cfg::SERVO_D135F::angle_pwm_neutral);
+  throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::speed_pwm_neutral);
 
   while(1)
   {
@@ -416,8 +433,8 @@ void testPWM()
     bool rc_signal = (ch[0] >= cfg::AUTO_DRIVE::rc_valid_min && ch[0] <= cfg::AUTO_DRIVE::rc_valid_max) &&
                      (ch[2] >= cfg::AUTO_DRIVE::rc_valid_min && ch[2] <= cfg::AUTO_DRIVE::rc_valid_max);
 
-    float rc_steer = cfg::SERVO_D135F::steer_center;
-    float rc_throt = cfg::ESC_10BL60_G2::throt_center;
+    float rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
+    float rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
     bool  rc_active = false;
     bool  pi_drive = false;   // true only when the Pi command drives the throttle
 
@@ -429,23 +446,23 @@ void testPWM()
       if(cfg::ESC_10BL60_G2::speed_demon)
       {
         drive_mode_sw = (ch[4] < 1500) ? true : false;
-        rc_throt = drive_mode_sw ? map(ch[2], 1000, 2000, 1500, 750)
-                                 : map(ch[2], 1000, 2000, 1500, 2250);
+        rc_throt = drive_mode_sw ? map(ch[2], 1000, 2000, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_min)
+                                 : map(ch[2], 1000, 2000, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
       }
       else
       {
         //Throttle deadzone 1140 < 1500 < 1575
         if(ch[2] > 1525)      rc_throt = map(ch[2], 1500, 2000, 1575, max_pwm_throt);
         else if(ch[2] < 1475) rc_throt = map(ch[2], 1000, 1500, max_pwm_rev, 1475);
-        else                  rc_throt = 1500;
+        else                  rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
         rc_throt = (rc_throt > max_pwm_throt) ? max_pwm_throt : rc_throt;
         rc_throt = (rc_throt < max_pwm_rev)   ? max_pwm_rev   : rc_throt;
       }
 
       // Human is driving if either stick output leaves its neutral band.
       rc_active =
-        (fabsf(rc_throt - cfg::ESC_10BL60_G2::throt_center) > cfg::AUTO_DRIVE::throt_override_band) ||
-        (fabsf(rc_steer - cfg::SERVO_D135F::steer_center)   > cfg::AUTO_DRIVE::steer_override_band);
+        (fabsf(rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) > cfg::AUTO_DRIVE::throt_override_band) ||
+        (fabsf(rc_steer - cfg::SERVO_D135F::angle_pwm_neutral)   > cfg::AUTO_DRIVE::steer_override_band);
     }
 
     if(rc_active)
@@ -458,6 +475,9 @@ void testPWM()
     {
       // Fallback to the Pi: sticks centered, or no receiver. Actuate a fresh
       // command (normalized [-1,1] passthrough); neutral if the Pi is silent.
+      // The Pi sends the full [-1,1] range; the speed_pwm_*/angle_pwm_* bounds
+      // cap it. +1 -> max, 0 -> neutral, -1 -> min (verify polarity on hardware;
+      // flip pit.yaml steering_sign/speed_sign if a stick drives the wrong way).
       bool fresh = (lastRxTime != 0) &&
                    ((micros() - lastRxTime) < (cfg::UART::rx_timeout * 1000UL));
 
@@ -468,25 +488,25 @@ void testPWM()
         float motor = cmd_setpoint[1];
         CmdMutex.unlock();
 
-        servo = constrain(servo, -1.0f, 1.0f);
-        motor = constrain(motor, -1.0f, 1.0f);
-
-        cmd_pwm[0] = cfg::SERVO_D135F::steer_center + servo * cfg::SERVO_D135F::steer_mag * cfg::AUTO_DRIVE::steer_limit;
-        cmd_pwm[1] = cfg::ESC_10BL60_G2::throt_center - motor * cfg::ESC_10BL60_G2::throt_mag * cfg::AUTO_DRIVE::throt_limit;
+        cmd_pwm[0] = mapNormToPwm(servo, cfg::SERVO_D135F::angle_pwm_min,
+                                  cfg::SERVO_D135F::angle_pwm_neutral, cfg::SERVO_D135F::angle_pwm_max);
+        cmd_pwm[1] = mapNormToPwm(motor, cfg::ESC_10BL60_G2::speed_pwm_min,
+                                  cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
         pi_drive = true;
       }
       else
       {
-        cmd_pwm[0] = cfg::SERVO_D135F::steer_center;
-        cmd_pwm[1] = cfg::ESC_10BL60_G2::throt_center;
+        cmd_pwm[0] = cfg::SERVO_D135F::angle_pwm_neutral;
+        cmd_pwm[1] = cfg::ESC_10BL60_G2::speed_pwm_neutral;
       }
     }
 
     // Steering actuates immediately. The Pi's throttle ramps toward the target
     // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
     // directly, so a human override and the stale-command stop are both instant.
-    static float throt_out = cfg::ESC_10BL60_G2::throt_center;
-    if(pi_drive)
+    static float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    bool rev_cmd = cmd_pwm[1] < cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    if(pi_drive && !(cfg::ESC_10BL60_G2::rev_snap && rev_cmd))
     {
       float d = cmd_pwm[1] - throt_out;
       float step = cfg::ESC_10BL60_G2::throt_slew_us;
@@ -509,43 +529,131 @@ void DotMatrix()
 {
   SPIMutex.lock();
   mx.begin();
-  mx.setIntensity(8);
+  mx.setIntensity(cfg::MAX_7219_DOT_MATRIX::intensity);
   mx.displayClear();
+  // Intro splash on boot; scrolls once, then the loop switches to the glyph.
+  mx.displayText("RACECAR NEO", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
   SPIMutex.unlock();
+
+  MD_MAX72XX* gfx = mx.getGraphicObject();
+  bool    splashDone = false;
+  bool    wasPi = false;
+  int16_t lastMode = -1;
 
   while(1)
   {
-    char msgbuf[16];
+    bool fresh = (lastRxTime != 0) &&
+                 ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
 
-    SPIMutex.lock();
-    mx.displayClear();
-    mx.flush();
-    PowerMutex.lock();
-    dtostrf(power[0], 5, 2, msgbuf);
-    PowerMutex.unlock();
-    mx.displayText(msgbuf, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
-    mx.displayAnimate();
-    SPIMutex.unlock();
-    threads.delay(100);
+    static bool     bmp[192];
+    uint8_t         state;
+    CmdMutex.lock();
+    memcpy(bmp, dotmatrix_cmd, sizeof(bmp));
+    state = system_state;
+    CmdMutex.unlock();
+
+    bool pi_dm = fresh && (state & cfg::SYS_STATE::dotmatrix_active);
+
+    if(pi_dm)
+    {
+      // Render the Pi's 8x24 bitmap directly (row-major, 1 = LED on). The raw
+      // setPoint column axis runs opposite to the MD_Parola text engine, so
+      // reverse it to match the splash/glyph orientation (else text mirrors).
+      const uint16_t W = 8 * cfg::MAX_7219_DOT_MATRIX::num_matrix;
+      SPIMutex.lock();
+      gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+      for(uint8_t r = 0; r < 8; r++)
+        for(uint16_t c = 0; c < W; c++)
+          gfx->setPoint(r, (W - 1) - c, bmp[r * W + c]);
+      gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+      SPIMutex.unlock();
+      wasPi = true;
+      lastMode = -1;   // force the glyph to redraw when the Pi releases the display
+      threads.delay(50);
+    }
+    else if(!splashDone)
+    {
+      // Play the boot splash scroll to completion.
+      SPIMutex.lock();
+      bool done = mx.displayAnimate();
+      SPIMutex.unlock();
+      if(done) splashDone = true;
+      threads.delay(20);
+    }
+    else
+    {
+      // Idle default: the drive-mode glyph (I / M / A from SystemState).
+      uint8_t mode = state & cfg::SYS_STATE::mode_mask;
+      if(wasPi || (int16_t)mode != lastMode)
+      {
+        const char* glyph = (mode == cfg::SYS_STATE::mode_manual) ? "M"
+                          : (mode == cfg::SYS_STATE::mode_auto)   ? "A" : "I";
+        SPIMutex.lock();
+        mx.displayClear();
+        mx.displayText(glyph, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
+        mx.displayReset();
+        SPIMutex.unlock();
+        lastMode = mode;
+        wasPi = false;
+      }
+      SPIMutex.lock();
+      mx.displayAnimate();
+      SPIMutex.unlock();
+      threads.delay(50);
+    }
   }
-
 }
 
 void ledStuffs()
 {
-  PowerMutex.lock();
-  numleds = map(power[1]*100, 700, 840, 0, 42);
-  PowerMutex.unlock();
-  for(int i = 0; i < numleds; i++)
+  const int N = cfg::RGB_LED_WS2812B::num_leds;
+
+  uint8_t state;
+  static uint8_t local_led[cfg::RGB_LED_WS2812B::num_leds * 3];
+  CmdMutex.lock();
+  memcpy(local_led, led_cmd, sizeof(local_led));
+  state = system_state;
+  CmdMutex.unlock();
+
+  bool fresh = (lastRxTime != 0) &&
+               ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
+
+  // The rainbow "loading" sweep plays only while the Pi asserts driver_starting
+  // (held for ~led_load_ms right after the driver launches). Booting the Teensy
+  // into an already-running Pi leaves the flag clear -> straight to red idle.
+  static uint32_t load_start = 0;
+  static bool     was_starting = false;
+  bool starting = fresh && (state & cfg::SYS_STATE::driver_starting);
+  if(starting && !was_starting) load_start = millis();
+  was_starting = starting;
+  bool loading = starting;
+
+  for(int i = 0; i < N; i++) leds[i] = CRGB::Black;
+
+  if(loading)
   {
-    leds[i] = ColorFromPalette(currrentPalette, colorIdx, cfg::RGB_LED_WS2812B::brightness, LINEARBLEND);
-    leds[83-i] = ColorFromPalette(currrentPalette, colorIdx, cfg::RGB_LED_WS2812B::brightness, LINEARBLEND);
-    colorIdx++;
+    // Rainbow wipe that fills the strip over led_load_ms.
+    uint32_t elapsed = millis() - load_start;
+    int lit = map(elapsed, 0, cfg::DISP::led_load_ms, 0, N);
+    for(int i = 0; i < lit && i < N; i++)
+      leds[i] = CHSV((uint8_t)(i * 255 / N + elapsed / 20), 255, 255);
   }
-  threads.delay(5);
+  else if(fresh && (state & cfg::SYS_STATE::led_active))
+  {
+    // Pi is driving the strip: one RGB triplet per LED.
+    for(int i = 0; i < N; i++)
+      leds[i] = CRGB(local_led[i * 3], local_led[i * 3 + 1], local_led[i * 3 + 2]);
+  }
+  else
+  {
+    // Idle default: single-color red voltage bar, filling from both ends.
+    PowerMutex.lock();
+    float volt = power[1];
+    PowerMutex.unlock();
+    int half = map((int)(volt * 100), 700, 840, 0, N / 2);
+    half = constrain(half, 0, N / 2);
+    for(int i = 0; i < half; i++) { leds[i] = CRGB::Red; leds[N - 1 - i] = CRGB::Red; }
+  }
+
   FastLED.show();
-  for(int i = 0; i < cfg::RGB_LED_WS2812B::num_leds; i++)
-  {
-    leds[i] = CRGB::Black;
-  }
 }

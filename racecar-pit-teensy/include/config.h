@@ -24,24 +24,33 @@ namespace cfg {
     namespace ESC_10BL60_G2 {
         constexpr uint8_t   motor_pin               = 3;
         constexpr bool      speed_demon             = true;
-        
+
         constexpr float     percentThrot            = 0.25;
         constexpr float     percentRev              = 0.25;
 
-        constexpr uint16_t  throt_center            = 1500;             // us
-        constexpr uint16_t  throt_mag               = 750;              // us
+        // Configurable PWM safety bounds. A normalized [-1,1] Pi command maps
+        // piecewise: -1 -> min, 0 -> neutral, +1 -> max. Tighten min/max to
+        // protect the drivetrain; the Pi no longer scales the range (its
+        // throttle scaling is 1, so the Teensy owns the physical limits).
+        constexpr uint16_t  speed_pwm_min           = 900;              // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
+        constexpr uint16_t  speed_pwm_neutral       = 1500;             // us, ESC arm / neutral
+        constexpr uint16_t  speed_pwm_max           = 2000;             // us, full-forward bound
         constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
+        // A slow slew from neutral through the brake zone reads as BRAKE on this
+        // fwd/brake/reverse ESC and never latches reverse. rev_snap sends a Pi
+        // reverse command straight to the reverse endpoint (no slew), presenting
+        // a hard reverse edge. Forward still slews; the ESC ignores a step there.
+        constexpr bool      rev_snap                = true;
     }
 
     namespace SERVO_D135F {
         constexpr uint8_t   servo_pin               = 2;
-        constexpr bool      max_steer               = false;
-        
-        constexpr float     percent_left            = 1.0;
-        constexpr float     percent_right           = 1.0;
 
-        constexpr uint16_t  steer_center            = 1500;             // us
-        constexpr uint16_t  steer_mag               = 475;              // us
+        // Steering PWM safety bounds; same [-1,1] -> min/neutral/max mapping as
+        // the ESC. -1 = full left, +1 = full right.
+        constexpr uint16_t  angle_pwm_min           = 1025;             // us, full-left bound
+        constexpr uint16_t  angle_pwm_neutral       = 1500;             // us, centered
+        constexpr uint16_t  angle_pwm_max           = 1975;             // us, full-right bound
     }
 
     namespace FLYSKY_IA6B_RX {
@@ -80,15 +89,34 @@ namespace cfg {
     namespace AUTO_DRIVE {
         // Drive priority: the RC transmitter overrides the Pi whenever a stick
         // leaves its neutral band. With the sticks centered (or no receiver),
-        // the Pi command stream drives as the fallback.
-        constexpr float     throt_limit                 = 0.25;             // Pi authority: fraction of throt_mag
-        constexpr float     steer_limit                 = 1.0;              // Pi authority: fraction of steer_mag
-        // RC-active detection: |RC-commanded PWM - center| beyond this -> human driving.
-        constexpr uint16_t  throt_override_band         = 40;               // us around throt_center
-        constexpr uint16_t  steer_override_band         = 40;               // us around steer_center
+        // the Pi command stream drives as the fallback. The Pi command spans
+        // the full [-1,1] range now; the speed_pwm_*/angle_pwm_* bounds cap it.
+        // RC-active detection: |RC-commanded PWM - neutral| beyond this -> human driving.
+        constexpr uint16_t  throt_override_band         = 40;               // us around speed_pwm_neutral
+        constexpr uint16_t  steer_override_band         = 40;               // us around angle_pwm_neutral
         // Plausible RC pulse band; outside it the receiver is treated as absent.
         constexpr uint16_t  rc_valid_min                = 900;              // us
         constexpr uint16_t  rc_valid_max                = 2100;             // us
+    }
+
+    namespace DISP {
+        // Dot matrix + LED behavior. When the Pi stops sending fresh command
+        // frames (driver down), the Teensy falls back to idle defaults.
+        constexpr uint32_t  cmd_timeout_ms             = 1000;             // Pi command staleness -> idle defaults
+        constexpr uint32_t  led_load_ms                = 10000;            // rainbow "loading" sweep duration on Pi connect
+    }
+
+    // Bit layout of RxPacket.SystemState (Pi -> Teensy): the low two bits carry
+    // the drive mode for the dot-matrix glyph; two flag bits say whether the Pi
+    // is actively driving each display so the Teensy knows when to show defaults.
+    namespace SYS_STATE {
+        constexpr uint8_t   mode_mask                   = 0x03;             // 0 idle, 1 manual, 2 auto
+        constexpr uint8_t   mode_idle                   = 0;
+        constexpr uint8_t   mode_manual                 = 1;
+        constexpr uint8_t   mode_auto                   = 2;
+        constexpr uint8_t   dotmatrix_active            = 0x04;             // Pi is commanding the dot matrix
+        constexpr uint8_t   led_active                  = 0x08;             // Pi is commanding the LED strip
+        constexpr uint8_t   driver_starting             = 0x10;             // Pi driver just launched: play the LED loading sweep
     }
 
     namespace TEENSY_THREADS {

@@ -26,6 +26,14 @@ extern CRGB leds[cfg::RGB_LED_WS2812B::num_leds];
 extern uint8_t colorIdx;
 extern uint8_t numleds;
 
+// ------------------- Display command from Pi -------------------- //
+// Latest dot-matrix bitmap (8x24, row-major, 1=on) and LED strip colors
+// (RGB triplets) copied out of the command frame; SystemState carries the
+// drive mode + per-display active flags (see cfg::SYS_STATE).
+extern bool    dotmatrix_cmd[192];
+extern uint8_t led_cmd[cfg::RGB_LED_WS2812B::num_leds * 3];
+extern uint8_t system_state;
+
 // -------------- Servo and Motor ------------ //
 extern float cmd_setpoint[2];
 extern float cmd_pwm[2];
@@ -65,6 +73,10 @@ extern volatile int8_t lastDir;
 // -------------------- functions ------------------------ //
 float getCurrentSpeed();
 void InnerControlLoop();
+
+// Map a normalized [-1,1] command to a PWM microsecond value, piecewise about
+// neutral: -1 -> lo, 0 -> neu, +1 -> hi. Result clamped to [lo, hi].
+uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi);
 
 // ------ UART -------- //
 uint16_t crc16_ccitt(const uint8_t* data, size_t len, uint16_t crc = 0xFFFF);
