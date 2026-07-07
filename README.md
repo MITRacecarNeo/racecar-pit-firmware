@@ -2,7 +2,7 @@
 
 Teensy 4.1 firmware for the NEO-PIT drive PCB on the RACECAR Neo V2, plus the Pi-side UART reference. The board replaces the Pololu Maestro and absorbs the servo, ESC, LSM9DS1 IMU, INA226 power sensor, hall encoder, MAX7219 dot matrix, WS2812B strips, and FlySky iA6B RC receiver. The Pi speaks a binary UART protocol to the Teensy and sends normalized drive commands; the Teensy maps them to servo/ESC PWM and streams telemetry back.
 
-Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.4.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
+Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver) v0.5.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire format in `packets.h`.
 
 ## Contents
 
@@ -54,7 +54,7 @@ The ESC ignores an instant forward step from neutral, so the Pi throttle slews t
 
 ## Telemetry
 
-`fillTxBuff` packs the LSM9DS1 (9 axes via `getEvent(accel, mag, gyro)`), INA226 bus voltage and current, and a microsecond timestamp. `getRPM` zeroes the encoder after a hall-transition timeout (`stop_timeout_us`, 100 ms) instead of reporting a ghost speed from a stale interval.
+`fillTxBuff` packs the LSM9DS1 (9 axes via `getEvent(accel, mag, gyro)`), INA226 bus voltage (mV) and current (mA), the eight FlySky RC channels (raw pulse widths, us), and a microsecond timestamp. Current is packed as mA rather than truncated amps so sub-amp resolution survives the `uint16`. `getRPM` zeroes the encoder after a hall-transition timeout (`stop_timeout_us`, 100 ms) instead of reporting a ghost speed from a stale interval.
 
 ## Build and flash
 

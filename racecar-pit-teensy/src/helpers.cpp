@@ -137,7 +137,9 @@ void fillTxBuff()
     memcpy(txPacketPing.RxReceiver, rc_local, sizeof(rc_local));
     memcpy(txPacketPing.IMU, imu_local, sizeof(imu_local));
     txPacketPing.VoltAndCurr[0] = (uint16_t)(volt * 1000.0f);           // bus voltage, mV
-    txPacketPing.VoltAndCurr[1] = (uint16_t)(curr < 0.0f ? 0.0f : curr); // current, raw INA226 counts
+    // INA226 getCurrent() is amps; pack as mA so sub-amp resolution survives the
+    // uint16 (0..65535 mA covers the 8 A shunt range). Clamp negatives to 0.
+    txPacketPing.VoltAndCurr[1] = (uint16_t)(curr < 0.0f ? 0.0f : curr * 1000.0f);
     txPacketPing.Encoder        = getCurrentSpeed();                    // vehicle speed, m/s
     txPacketPing.Timestamp      = (int32_t)micros();
     TransmitMutex.unlock();
