@@ -32,9 +32,9 @@ namespace cfg {
         // piecewise: -1 -> min, 0 -> neutral, +1 -> max. Tighten min/max to
         // protect the drivetrain; the Pi no longer scales the range (its
         // throttle scaling is 1, so the Teensy owns the physical limits).
-        constexpr uint16_t  speed_pwm_min           = 900;              // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
+        constexpr uint16_t  speed_pwm_min           = 1375;              // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
         constexpr uint16_t  speed_pwm_neutral       = 1500;             // us, ESC arm / neutral
-        constexpr uint16_t  speed_pwm_max           = 2000;             // us, full-forward bound
+        constexpr uint16_t  speed_pwm_max           = 1650;             // us, full-forward bound
         constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
         // A slow slew from neutral through the brake zone reads as BRAKE on this
         // fwd/brake/reverse ESC and never latches reverse. rev_snap sends a Pi
