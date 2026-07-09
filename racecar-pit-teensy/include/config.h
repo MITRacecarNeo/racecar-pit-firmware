@@ -36,11 +36,21 @@ namespace cfg {
         constexpr uint16_t  speed_pwm_neutral       = 1500;             // us, ESC arm / neutral
         constexpr uint16_t  speed_pwm_max           = 1650;             // us, full-forward bound
         constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
+
+        constexpr float     cmd_deadband            = 0.01; // Ignore tiny joystick noise
+        constexpr uint16_t  speed_pwm_active_fwd    = 1520; // Ideal PWM to smoothly roll forward
+        constexpr uint16_t  speed_pwm_active_rev    = 1480; // Minimum PWM to smoothly roll backward
+        constexpr float     throt_slew_decel_us     = 10.0; // Faster step for braking to avoid lag
+
+        constexpr uint16_t  speed_pwm_kickstart     = 1560; // PWM needed to break static friction (artificial punch)
+        constexpr uint32_t  kickstart_duration_ms   = 0;   // Hold duration (ms) -- set to 0 to disable
+
         // A slow slew from neutral through the brake zone reads as BRAKE on this
         // fwd/brake/reverse ESC and never latches reverse. rev_snap sends a Pi
         // reverse command straight to the reverse endpoint (no slew), presenting
         // a hard reverse edge. Forward still slews; the ESC ignores a step there.
-        constexpr bool      rev_snap                = true;
+        // NOTE -- ESC IS IN FWD/REV MODE, SO SET THIS TO FALSE
+        constexpr bool      rev_snap                = false;
     }
 
     namespace SERVO_D135F {

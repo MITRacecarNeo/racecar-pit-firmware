@@ -492,8 +492,19 @@ void testPWM()
 
         cmd_pwm[0] = mapNormToPwm(servo, cfg::SERVO_D135F::angle_pwm_min,
                                   cfg::SERVO_D135F::angle_pwm_neutral, cfg::SERVO_D135F::angle_pwm_max);
-        cmd_pwm[1] = mapNormToPwm(motor, cfg::ESC_10BL60_G2::speed_pwm_min,
-                                  cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
+
+        if (fabs(motor) <= cfg::ESC_10BL60_G2::cmd_deadband) {
+            cmd_pwm[1] = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+        } else if (motor > 0.0f) {
+            // Remap [deadband, 1.0] to [active_fwd, max]
+            float scale = (motor - cfg::ESC_10BL60_G2::cmd_deadband) / (1.0f - cfg::ESC_10BL60_G2::cmd_deadband);
+            cmd_pwm[1] = cfg::ESC_10BL60_G2::speed_pwm_active_fwd + scale * (cfg::ESC_10BL60_G2::speed_pwm_max - cfg::ESC_10BL60_G2::speed_pwm_active_fwd);
+        } else {
+            // Remap [-1.0, -deadband] to [min, active_rev]
+            float scale = (motor + cfg::ESC_10BL60_G2::cmd_deadband) / (-1.0f + cfg::ESC_10BL60_G2::cmd_deadband);
+            cmd_pwm[1] = cfg::ESC_10BL60_G2::speed_pwm_active_rev - scale * (cfg::ESC_10BL60_G2::speed_pwm_active_rev - cfg::ESC_10BL60_G2::speed_pwm_min);
+        }
+
         pi_drive = true;
       }
       else
@@ -506,17 +517,49 @@ void testPWM()
     // Steering actuates immediately. The Pi's throttle ramps toward the target
     // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
     // directly, so a human override and the stale-command stop are both instant.
-    static float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+static float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    static uint32_t kickstart_start_ms = 0;
+    static bool in_kickstart = false;
+    
     bool rev_cmd = cmd_pwm[1] < cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    
     if(pi_drive && !(cfg::ESC_10BL60_G2::rev_snap && rev_cmd))
     {
       float d = cmd_pwm[1] - throt_out;
-      float step = cfg::ESC_10BL60_G2::throt_slew_us;
-      throt_out += (d > step) ? step : (d < -step ? -step : d);
+      
+      // Detect a launch from a dead stop going forward
+      if (throt_out == cfg::ESC_10BL60_G2::speed_pwm_neutral && cmd_pwm[1] > cfg::ESC_10BL60_G2::speed_pwm_neutral && !in_kickstart) 
+      {
+          in_kickstart = true;
+          kickstart_start_ms = millis();
+      }
+      
+      if (in_kickstart) 
+      {
+          // Apply the friction-breaking punch
+          if (millis() - kickstart_start_ms < cfg::ESC_10BL60_G2::kickstart_duration_ms) {
+              throt_out = cfg::ESC_10BL60_G2::speed_pwm_kickstart; 
+          } else {
+              // Kickstart over, snap down to the requested slow speed
+              in_kickstart = false;
+              throt_out = cmd_pwm[1]; 
+          }
+      } 
+      else 
+      {
+          // Determine if we are accelerating towards or away from neutral
+          bool is_accelerating = (throt_out >= cfg::ESC_10BL60_G2::speed_pwm_neutral && d > 0) || 
+                                 (throt_out <= cfg::ESC_10BL60_G2::speed_pwm_neutral && d < 0);
+                                 
+          float step = is_accelerating ? cfg::ESC_10BL60_G2::throt_slew_us : cfg::ESC_10BL60_G2::throt_slew_decel_us;
+          throt_out += (d > step) ? step : (d < -step ? -step : d);
+      }
     }
     else
     {
+      // Manual RC override or Reverse Snap
       throt_out = cmd_pwm[1];
+      in_kickstart = false; // Always reset kickstart state here
     }
 
     steerServo.writeMicroseconds(cmd_pwm[0]);
