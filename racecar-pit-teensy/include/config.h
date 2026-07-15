@@ -23,7 +23,7 @@ namespace cfg {
 
     namespace ESC_10BL60_G2 {
         constexpr uint8_t   motor_pin               = 3;
-        constexpr bool      speed_demon             = true;
+        constexpr bool      speed_demon             = false;
 
         constexpr float     percentThrot            = 0.25;
         constexpr float     percentRev              = 0.25;
@@ -32,25 +32,11 @@ namespace cfg {
         // piecewise: -1 -> min, 0 -> neutral, +1 -> max. Tighten min/max to
         // protect the drivetrain; the Pi no longer scales the range (its
         // throttle scaling is 1, so the Teensy owns the physical limits).
-        constexpr uint16_t  speed_pwm_min           = 1375;              // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
+        constexpr uint16_t  speed_pwm_min           = 800;              // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
         constexpr uint16_t  speed_pwm_neutral       = 1500;             // us, ESC arm / neutral
-        constexpr uint16_t  speed_pwm_max           = 1650;             // us, full-forward bound
-        constexpr float     throt_slew_us           = 1.0;              // max Pi-throttle PWM change per control iter; ESC needs a ramp, not a step
+        constexpr uint16_t  speed_pwm_max           = 2200;             // us, full-forward bound
 
-        constexpr float     cmd_deadband            = 0.01; // Ignore tiny joystick noise
-        constexpr uint16_t  speed_pwm_active_fwd    = 1520; // Ideal PWM to smoothly roll forward
-        constexpr uint16_t  speed_pwm_active_rev    = 1480; // Minimum PWM to smoothly roll backward
-        constexpr float     throt_slew_decel_us     = 10.0; // Faster step for braking to avoid lag
-
-        constexpr uint16_t  speed_pwm_kickstart     = 1560; // PWM needed to break static friction (artificial punch)
-        constexpr uint32_t  kickstart_duration_ms   = 0;   // Hold duration (ms) -- set to 0 to disable
-
-        // A slow slew from neutral through the brake zone reads as BRAKE on this
-        // fwd/brake/reverse ESC and never latches reverse. rev_snap sends a Pi
-        // reverse command straight to the reverse endpoint (no slew), presenting
-        // a hard reverse edge. Forward still slews; the ESC ignores a step there.
-        // NOTE -- ESC IS IN FWD/REV MODE, SO SET THIS TO FALSE
-        constexpr bool      rev_snap                = false;
+        constexpr float     cmd_deadband            = 0.01;             // Ignore tiny joystick noise
     }
 
     namespace SERVO_D135F {
@@ -93,7 +79,7 @@ namespace cfg {
         constexpr uint8_t   hall_b_pin                  = 31;
         constexpr uint8_t   hall_c_pin                  = 32;
         constexpr uint8_t   mot_temp_pin                = A17;
-        constexpr uint32_t  stop_timeout_us             = 100000;           // no hall edge in this window -> RPM 0
+        constexpr uint32_t  stop_timeout_us             = 30000;           // no hall edge in this window -> RPM 0
     }
 
     namespace AUTO_DRIVE {
@@ -135,9 +121,24 @@ namespace cfg {
 
     namespace CAR_SPECS {
         constexpr float     wheel_diameter              = 0.072;                            // m
-        constexpr float     wheel_circumference         = wheel_diameter * 3.1415;          // m
+        constexpr float     wheel_circumference         = wheel_diameter * PI;          // m
         constexpr float     ratio_motor_to_transaxle    = 18.0 / 61.0;
         constexpr float     ratio_transaxle_to_diff     = 15.0 / 37.0;
+    }
+
+    namespace PID_CTRL {
+        // Target physical speeds in meters per second (m/s)
+        constexpr float max_speed_mps = 3.0f; // Top speed at full joystick
+        constexpr float min_speed_mps = 0.5f; // Crawl speed at minimum joystick
+        
+        // PID Tuning Constants
+        constexpr float kp = 30.0f;
+        constexpr float ki = 30.0f;
+        constexpr float kd = 0.0f;
+       
+        constexpr float kd_filter_alpha = 0.05f;
+
+        constexpr float max_integral = 150.0f; // Anti-windup limit, heavy to bridge deadband gap
     }
 
 }
