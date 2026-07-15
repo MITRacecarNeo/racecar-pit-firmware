@@ -134,11 +134,16 @@ namespace cfg {
         // PID Tuning Constants
         constexpr float kp = 30.0f;
         constexpr float ki = 30.0f;
+        constexpr float max_integral = 150.0f; // Anti-windup limit, heavy to bridge deadband gap
         constexpr float kd = 0.0f;
-       
         constexpr float kd_filter_alpha = 0.05f;
 
-        constexpr float max_integral = 150.0f; // Anti-windup limit, heavy to bridge deadband gap
+        // Feedfoward and Gain Scheduling Constants
+        constexpr float deadband_us = 50.0f;
+        constexpr float kv_ff = 20.0f;
+
+        constexpr float kp_boost = 60.0f;
+        constexpr float err_threshold = 0.5f;
     }
 
 }

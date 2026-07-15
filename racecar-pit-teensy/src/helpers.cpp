@@ -443,7 +443,24 @@ uint16_t speedPID(float target_mps, float measured_mps, float dt)
 {
   float err = target_mps - measured_mps;
 
-  float p_term = cfg::PID_CTRL::kp * err;
+  float ff_term = 0.0f;
+  if (target_mps > cfg::PID_CTRL::deadband_us)
+  {
+    ff_term = cfg::PID_CTRL::deadband_us + cfg::PID_CTRL::kv_ff * target_mps;
+  }
+  else if (target_mps < -cfg::PID_CTRL::deadband_us)
+  {
+    ff_term = -cfg::PID_CTRL::deadband_us + cfg::PID_CTRL::kv_ff * target_mps;
+  }
+
+  float active_kp = cfg::PID_CTRL::kp;
+  if (fabs(err) > cfg::PID_CTRL::err_threshold)
+  {
+    active_kp = cfg::PID_CTRL::kp_boost;
+  }
+
+  float p_term = active_kp * err;
+
   float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
   static float filtered_deriv = 0.0f;
   filtered_deriv = (cfg::PID_CTRL::kd_filter_alpha * raw_deriv) + ((1.0f - cfg::PID_CTRL::kd_filter_alpha) * filtered_deriv);
@@ -452,7 +469,7 @@ uint16_t speedPID(float target_mps, float measured_mps, float dt)
 
   // Conditionally integrate only if the predicted PWM is not already at the limit and the error is pushing it further out of bounds.
   float current_i_term = cfg::PID_CTRL::ki * speedIntegral;
-  float predicted_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + p_term + current_i_term + d_term;
+  float predicted_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + current_i_term + d_term;
 
   bool hit_upper_limit = (predicted_pwm >= cfg::ESC_10BL60_G2::speed_pwm_max) && (err > 0);
   bool hit_lower_limit = (predicted_pwm <= cfg::ESC_10BL60_G2::speed_pwm_min) && (err < 0);
@@ -464,7 +481,7 @@ uint16_t speedPID(float target_mps, float measured_mps, float dt)
 
   speedIntegral = constrain(speedIntegral, -cfg::PID_CTRL::max_integral, cfg::PID_CTRL::max_integral);
 
-  float final_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + p_term + (cfg::PID_CTRL::ki * speedIntegral) + d_term;
+  float final_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + (cfg::PID_CTRL::ki * speedIntegral) + d_term;
   return (uint16_t)constrain(final_pwm, (float)cfg::ESC_10BL60_G2::speed_pwm_min, (float)cfg::ESC_10BL60_G2::speed_pwm_max);
 }
 
