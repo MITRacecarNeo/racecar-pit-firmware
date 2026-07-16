@@ -442,15 +442,21 @@ float speedLastErr = 0.0f;
 uint16_t speedPID(float target_mps, float measured_mps, float dt)
 {
   float err = target_mps - measured_mps;
-
   float ff_term = 0.0f;
-  if (target_mps > cfg::PID_CTRL::deadband_us)
+
+  float stiction_kick_rev = 60.0f;
+
+  if (target_mps > cfg::ESC_10BL60_G2::cmd_deadband)
   {
-    ff_term = cfg::PID_CTRL::deadband_us + cfg::PID_CTRL::kv_ff * target_mps;
+    ff_term = cfg::PID_CTRL::deadband_fwd_us + cfg::PID_CTRL::kv_ff_fwd * target_mps;
   }
-  else if (target_mps < -cfg::PID_CTRL::deadband_us)
+  else if (target_mps < -cfg::ESC_10BL60_G2::cmd_deadband)
   {
-    ff_term = -cfg::PID_CTRL::deadband_us + cfg::PID_CTRL::kv_ff * target_mps;
+    ff_term = -cfg::PID_CTRL::deadband_rev_us + cfg::PID_CTRL::kv_ff_rev * target_mps;
+    if (measured_mps > -.05f)
+    {
+      ff_term -= stiction_kick_rev;
+    }
   }
 
   float active_kp = cfg::PID_CTRL::kp;
@@ -577,7 +583,7 @@ void testPWM()
       else
       {
         cmd_pwm[0] = cfg::SERVO_D135F::angle_pwm_neutral;
-        cmd_pwm[1] = 0.0f;
+        cmd_pwm[1] = cfg::ESC_10BL60_G2::speed_pwm_neutral;
       }
     }
 
