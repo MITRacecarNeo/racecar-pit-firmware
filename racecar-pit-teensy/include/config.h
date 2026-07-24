@@ -144,7 +144,7 @@ namespace cfg
     namespace PID_CTRL
     {
         // Target physical speeds in meters per second (m/s)
-        constexpr float max_speed_mps = 3.0f;  // Top speed at full joystick
+        constexpr float max_speed_mps = 1.0f;  // Top speed at full joystick
         constexpr float min_speed_mps = 0.75f; // Crawl speed at minimum joystick
 
         // PID Tuning Constants

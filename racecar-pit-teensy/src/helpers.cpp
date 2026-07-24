@@ -262,7 +262,17 @@ void onHallChange()
   uint8_t a = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_a_pin);
   uint8_t b = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_b_pin);
   uint8_t c = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_c_pin);
-
+/*   Serial.print(">Hall_A:");
+  Serial.println(a);
+  Serial.print(">Hall_B:");
+  Serial.println(b);
+  Serial.print(">Hall_C:");
+  Serial.println(c);
+    
+  
+  Serial.print(">State:");
+  Serial.println(currentState); */
+  
   currentState = (a << 2) | (b << 1) | c;
 
   if (currentState != lastState)
@@ -332,10 +342,10 @@ void InnerControlLoop()
 {
   while (true)
   {
-    Serial.print("Dir: " + String(direction) + "\t");
-    Serial.println(getCurrentSpeed());
-    Serial.print(">RPM:");
-    Serial.println(lastRPM);
+    //Serial.println("Dir: " + String(direction) + "\t");
+    //Serial.println(getCurrentSpeed());
+    //Serial.print(">RPM:");
+    //Serial.println(lastRPM);
     threads.delay(20);
   }
 }
@@ -444,7 +454,7 @@ uint16_t speedPID(float target_mps, float measured_mps, float dt)
   float err = target_mps - measured_mps;
   float ff_term = 0.0f;
 
-  float stiction_kick_rev = 60.0f;
+  float stiction_kick_rev = 100.0f;
 
   if (target_mps > cfg::ESC_10BL60_G2::cmd_deadband)
   {
@@ -770,7 +780,7 @@ void ledStuffs()
     PowerMutex.lock();
     float volt = power[1];
     PowerMutex.unlock();
-    int half = map((int)(volt * 100), 700, 840, 0, N / 2);
+    int half = map((int)(volt * 100), 750, 840, 0, N / 2);
     half = constrain(half, 0, N / 2);
     for (int i = 0; i < half; i++)
     {
