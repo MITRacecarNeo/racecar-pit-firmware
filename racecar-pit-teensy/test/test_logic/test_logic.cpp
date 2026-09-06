@@ -10,6 +10,8 @@ static const uint16_t STEER_LO = 1025, STEER_NEU = 1500, STEER_HI = 1975;
 static const uint16_t THROT_LO = 800, THROT_NEU = 1500, THROT_HI = 2200;
 // Mirrored from cfg::AUTO_DRIVE and cfg::FLYSKY_IA6B_RX.
 static const uint16_t RC_LO = 900, RC_HI = 2100, SW_THRESH = 1500;
+// Mirrored from cfg::PID_CTRL and cfg::ESC_10BL60_G2.
+static const float DEADBAND = 0.01f, MIN_MPS = 0.75f, MAX_MPS = 5.0f, SLOW_MPS = 1.0f;
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -128,6 +130,49 @@ static void test_rc_switch_absent_channel_reads_down(void)
     TEST_ASSERT_FALSE(rcSwitchUp(2500, RC_LO, RC_HI, SW_THRESH));
 }
 
+// ----------------------- throttleToTargetMps ---------------------- //
+
+// The property slow mode rests on: full stick lands on the cap exactly, in
+// either mode, so "capped at 1.0 m/s" is a setpoint and not an approximation.
+static void test_setpoint_full_stick_hits_the_cap_exactly(void)
+{
+    TEST_ASSERT_EQUAL_FLOAT(MAX_MPS, throttleToTargetMps(1.0f, DEADBAND, MIN_MPS, MAX_MPS));
+    TEST_ASSERT_EQUAL_FLOAT(-MAX_MPS, throttleToTargetMps(-1.0f, DEADBAND, MIN_MPS, MAX_MPS));
+    TEST_ASSERT_EQUAL_FLOAT(SLOW_MPS, throttleToTargetMps(1.0f, DEADBAND, MIN_MPS, SLOW_MPS));
+    TEST_ASSERT_EQUAL_FLOAT(-SLOW_MPS, throttleToTargetMps(-1.0f, DEADBAND, MIN_MPS, SLOW_MPS));
+}
+
+// Slow mode rescales rather than clips: half stick has to land strictly between
+// the endpoints, not pinned at the cap the way a clamp would leave it.
+static void test_setpoint_slow_mode_rescales_rather_than_clips(void)
+{
+    float half = throttleToTargetMps(0.5f, DEADBAND, MIN_MPS, SLOW_MPS);
+    TEST_ASSERT_TRUE(half > MIN_MPS);
+    TEST_ASSERT_TRUE(half < SLOW_MPS);
+
+    float fast_half = throttleToTargetMps(0.5f, DEADBAND, MIN_MPS, MAX_MPS);
+    TEST_ASSERT_TRUE(fast_half > half);
+}
+
+static void test_setpoint_just_past_deadband_starts_at_min(void)
+{
+    TEST_ASSERT_EQUAL_FLOAT(MIN_MPS, throttleToTargetMps(DEADBAND, DEADBAND, MIN_MPS, MAX_MPS));
+    TEST_ASSERT_EQUAL_FLOAT(-MIN_MPS, throttleToTargetMps(-DEADBAND, DEADBAND, MIN_MPS, MAX_MPS));
+}
+
+static void test_setpoint_clamps_and_stays_in_band(void)
+{
+    TEST_ASSERT_EQUAL_FLOAT(SLOW_MPS, throttleToTargetMps(9.0f, DEADBAND, MIN_MPS, SLOW_MPS));
+    TEST_ASSERT_EQUAL_FLOAT(-SLOW_MPS, throttleToTargetMps(-9.0f, DEADBAND, MIN_MPS, SLOW_MPS));
+
+    for (int i = -100; i <= 100; i++)
+    {
+        float mps = throttleToTargetMps(i / 100.0f, DEADBAND, MIN_MPS, SLOW_MPS);
+        TEST_ASSERT_TRUE(mps <= SLOW_MPS + 1e-4f);
+        TEST_ASSERT_TRUE(mps >= -SLOW_MPS - 1e-4f);
+    }
+}
+
 // --------------------------- battery SoC -------------------------- //
 
 static void test_soc_endpoints_and_clamping(void)
@@ -183,6 +228,10 @@ int main(int, char **)
     RUN_TEST(test_rc_pulse_validity_band);
     RUN_TEST(test_rc_switch_positions);
     RUN_TEST(test_rc_switch_absent_channel_reads_down);
+    RUN_TEST(test_setpoint_full_stick_hits_the_cap_exactly);
+    RUN_TEST(test_setpoint_slow_mode_rescales_rather_than_clips);
+    RUN_TEST(test_setpoint_just_past_deadband_starts_at_min);
+    RUN_TEST(test_setpoint_clamps_and_stays_in_band);
     RUN_TEST(test_soc_endpoints_and_clamping);
     RUN_TEST(test_soc_is_monotonic_across_the_band);
     RUN_TEST(test_soc_tracks_the_lipo_knee_not_the_voltage);

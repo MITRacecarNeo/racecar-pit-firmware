@@ -48,7 +48,7 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
-| 0.7.0 - 0.7.3 | 0.7.0 | unchanged |
+| 0.7.0 - 0.7.3 | 0.7.1 | unchanged |
 | 0.6.0 | none tagged; run 0.5.0 | unchanged |
 | 0.5.0 - 0.5.1 | 0.5.0 | `TXPacket` 94 B, `RxPacket` 470 B + 4 B magic |
 | 0.4.0 | 0.4.0 | pre-mA current packing |
@@ -120,8 +120,9 @@ Actuation follows an RC-priority, Pi-fallback model with no arm switch:
 - With the sticks centered or no receiver, a fresh Pi command drives. Steering
   is open loop: a normalized `[-1, 1]` angle maps piecewise across
   `angle_pwm_min`/`angle_pwm_neutral`/`angle_pwm_max`.
-- The Pi throttle is closed loop. The normalized magnitude maps onto
-  `min_speed_mps`..`max_speed_mps` (0.75 to 5.0 m/s) and a PI controller with
+- The Pi throttle is closed loop, as is the RC throttle in slow mode. The
+  normalized magnitude maps onto `min_speed_mps`..`max_speed_mps` (0.75 to
+  5.0 m/s), or onto `slow_speed_mps` in slow mode, and a PI controller with
   feedforward holds that setpoint against the hall encoder, clamped to
   `speed_pwm_min`..`speed_pwm_max`. A command inside `cmd_deadband` writes
   neutral and resets the integrator.
@@ -204,11 +205,15 @@ Both default to the left column when the receiver is absent, so losing the link
 never leaves the car stuck slow or the Pi locked out. The decode is
 `rcSwitchUp()` in `drive_map.h`, host tested.
 
-Slow mode acts in two places. On the Pi path it clamps the closed-loop setpoint
-to `slow_speed_mps`. The RC path is open loop with no setpoint to clamp, so it
-trims the PWM throw about neutral by `slow_rc_scale`; that scalar is provisional
-and wants a bench pass against a measured 1.0 m/s. Override detection runs on
-the untrimmed throw, so slow mode never makes it harder to grab the car back.
+Slow mode rescales the full stick travel onto `slow_speed_mps` on both paths,
+so full throttle is a 1.0 m/s setpoint exactly rather than a clipped 5.0 m/s
+command. It rescales rather than clips, which keeps stick resolution usable
+instead of pinning most of the travel at the cap.
+
+Because a cap in m/s cannot be held open loop, slow mode closes the loop on the
+RC stick too, running it through the same PI controller and encoder as the Pi
+path. Fast-mode RC keeps the direct PWM path, so a human override there stays
+instant.
 
 Manual override locks the Pi out of drive entirely: with the sticks centered the
 car holds neutral instead of handing back to autonomy. It also takes the dot
@@ -221,10 +226,13 @@ autonomy is locked out. The LED strip is untouched and the Pi can still drive it
 Both switches ride in the existing telemetry RC array, so this needs no protocol
 change. The driver reads the same two channels from `/rc/channels` and applies
 the same threshold: index 4 for speed mode, index 7 for override, up at or above
-1500 us raw (0.0 normalized). While override is up the driver should stop
-publishing drive commands rather than have the Teensy discard them, and in slow
-mode it should cap its own setpoint at 1.0 m/s so the two ends agree on the
-limit instead of fighting over it.
+1500 us raw (0.0 normalized). The driver is not required to act on either
+switch. Command frames are received, CRC-checked, and stored no matter what the
+switches say; override is applied at actuation only, so the Pi can keep
+publishing at its own rate and never blocks or gridlocks on the Teensy. Reading
+the switches is therefore optional and only useful for telling the operator what
+the car is doing. Flipping override back down resumes drive on the next frame,
+with no reconnect.
 
 ## Idle displays
 
@@ -289,6 +297,12 @@ the pin assignments.
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [0.7.1] - 2026-09-06
+- Changed: slow mode is an exact 1.0 m/s setpoint on both paths. RC slow mode
+  now closes the loop on the encoder instead of trimming the PWM throw by a
+  guessed scalar, and full stick rescales onto the cap rather than clipping.
+- Removed: `slow_rc_scale`.
 
 ### [0.7.0] - 2026-09-06
 Pairs with driver v0.7.x; wire format unchanged from 0.5.0.

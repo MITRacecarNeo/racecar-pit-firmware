@@ -435,22 +435,6 @@ static uint16_t speedPID(float target_mps, float measured_mps, float dt)
   return (uint16_t)constrain(final_pwm, (float)cfg::ESC_10BL60_G2::speed_pwm_min, (float)cfg::ESC_10BL60_G2::speed_pwm_max);
 }
 
-// Normalized [-1,1] throttle to a speed setpoint spanning min_speed_mps to
-// max_speed_mps, so the first usable stick position clears the ESC deadband.
-static float throttleToTargetMps(float motor)
-{
-  using namespace cfg::PID_CTRL;
-  const float db = cfg::ESC_10BL60_G2::cmd_deadband;
-
-  if (motor > 0.0f)
-  {
-    float scale = (motor - db) / (1.0f - db);
-    return min_speed_mps + scale * (max_speed_mps - min_speed_mps);
-  }
-  float scale = (motor + db) / (-1.0f + db);
-  return -min_speed_mps - scale * (max_speed_mps - min_speed_mps);
-}
-
 void testPWM()
 {
   steerServo.attach(cfg::SERVO_D135F::servo_pin);
@@ -485,6 +469,7 @@ void testPWM()
 
     float rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
     float rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    float rc_norm = 0.0f;
     bool rc_active = false;
     bool pi_drive = false;
 
@@ -504,17 +489,22 @@ void testPWM()
       }
       rc_throt = constrain(rc_throt, (float)max_pwm_rev, (float)max_pwm_throt);
 
-      // Detect the override on the full throw, then trim: slow mode must not
-      // make it harder for a human to take the car back.
       rc_active =
           (fabsf(rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) > cfg::AUTO_DRIVE::throt_override_band) ||
           (fabsf(rc_steer - cfg::SERVO_D135F::angle_pwm_neutral) > cfg::AUTO_DRIVE::steer_override_band);
 
-      if (slow_mode)
+      // The same stick as a normalized command, for the closed loop.
+      if (throt_ch > cfg::ESC_10BL60_G2::rc_throt_fwd_break)
       {
-        rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral +
-                   (rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) * cfg::ESC_10BL60_G2::slow_rc_scale;
+        rc_norm = (float)(throt_ch - cfg::ESC_10BL60_G2::speed_pwm_neutral) /
+                  (float)(cfg::FLYSKY_IA6B_RX::pulse_max - cfg::ESC_10BL60_G2::speed_pwm_neutral);
       }
+      else if (throt_ch < cfg::ESC_10BL60_G2::rc_throt_rev_break)
+      {
+        rc_norm = (float)(throt_ch - cfg::ESC_10BL60_G2::speed_pwm_neutral) /
+                  (float)(cfg::ESC_10BL60_G2::speed_pwm_neutral - cfg::FLYSKY_IA6B_RX::pulse_min);
+      }
+      rc_norm = constrain(rc_norm, -1.0f, 1.0f);
     }
 
     manual_override = override_on;
@@ -557,13 +547,31 @@ void testPWM()
     float measured_mps = getCurrentSpeed();
     float target_mps = 0.0f;
 
-    if (pi_drive && fabsf(cmd_pwm[1]) > cfg::ESC_10BL60_G2::cmd_deadband)
+    // Slow mode rescales the whole stick onto the reduced band, so full travel
+    // lands on slow_speed_mps exactly instead of clipping the top.
+    const float speed_cap = slow_mode ? cfg::PID_CTRL::slow_speed_mps : cfg::PID_CTRL::max_speed_mps;
+    const float db = cfg::ESC_10BL60_G2::cmd_deadband;
+
+    // Slow mode closes the loop on the RC stick too: a PWM guess cannot hold a
+    // speed, and the cap is a speed. Fast mode keeps RC on the direct PWM path
+    // so a human override stays instant.
+    bool closed_loop = false;
+    float norm_cmd = 0.0f;
+
+    if (rc_active)
     {
-      target_mps = throttleToTargetMps(cmd_pwm[1]);
-      if (slow_mode)
-      {
-        target_mps = constrain(target_mps, -cfg::PID_CTRL::slow_speed_mps, cfg::PID_CTRL::slow_speed_mps);
-      }
+      closed_loop = slow_mode && fabsf(rc_norm) > db;
+      norm_cmd = rc_norm;
+    }
+    else if (pi_drive && fabsf(cmd_pwm[1]) > db)
+    {
+      closed_loop = true;
+      norm_cmd = cmd_pwm[1];
+    }
+
+    if (closed_loop)
+    {
+      target_mps = throttleToTargetMps(norm_cmd, db, cfg::PID_CTRL::min_speed_mps, speed_cap);
       throt_out = speedPID(target_mps, measured_mps, dt);
     }
     else

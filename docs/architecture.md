@@ -137,10 +137,14 @@ frame, so all eight slots populate.
 `rc_driving` volatiles. Under override the display shows `M` while the sticks
 are live and `I` otherwise, and the Pi's bitmap and mode bits are ignored.
 
-Slow mode clamps the closed-loop setpoint on the Pi path and trims the open-loop
-PWM throw by `slow_rc_scale` on the RC path; RC override detection runs before
-the trim. The driver reads the same two channels and threshold out of
-`/rc/channels`, so the switches need no wire change.
+Slow mode rescales full stick travel onto `slow_speed_mps` on both paths, so the
+cap is an exact setpoint rather than a clipped command. A speed cap cannot be
+held open loop, so slow mode routes the RC stick through `speedPID` as well;
+fast-mode RC keeps the direct PWM path and its instant override.
+
+Command frames are received, CRC-checked, and stored regardless of either
+switch; override is applied at actuation only. The Pi therefore never blocks on
+the Teensy, and reading the switches out of `/rc/channels` is optional.
 
 ## Interfaces
 
@@ -175,7 +179,8 @@ runtime meaning on a microcontroller: all tunables are compile-time constants in
   at 921600 baud, shorter than the scheduler can preempt `UARTRx` for, and a
   474-byte command frame is lost mid-flight when it overflows.
 - swD up locks the Pi out of drive: centered sticks hold neutral rather than
-  handing control back to autonomy.
+  handing control back to autonomy. The link stays live and frames are still
+  accepted, so drive resumes on the next frame when the switch drops.
 - Pi commands are dropped after `rx_timeout` (50 ms) and the drive falls to
   neutral. The RC transmitter overrides the Pi whenever a stick leaves its
   neutral band and a plausible pulse is present, so a dead receiver holds

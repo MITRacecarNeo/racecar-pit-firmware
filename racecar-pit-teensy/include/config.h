@@ -60,11 +60,6 @@ namespace cfg
         constexpr uint16_t rc_throt_fwd_floor = 1575; // first PWM past the ESC forward deadband
 
         constexpr float cmd_deadband = 0.01; // ignore joystick noise around zero
-
-        // Slow mode (swA up) trims the open-loop RC throw about neutral. The
-        // Pi path caps a speed setpoint instead; see PID_CTRL::slow_speed_mps.
-        // Provisional: set it on the bench against a measured 1.0 m/s.
-        constexpr float slow_rc_scale = 0.4f;
     }
 
     namespace SERVO_D135F
@@ -207,7 +202,9 @@ namespace cfg
         // on the hall encoder holds the setpoint.
         constexpr float max_speed_mps = 5.0f;  // top speed at full joystick
         constexpr float min_speed_mps = 0.75f; // crawl speed at minimum joystick
-        constexpr float slow_speed_mps = 1.0f; // setpoint cap in slow mode (swA up)
+        // Slow mode (swA up) rescales full stick onto this, on both the Pi and
+        // the RC path; RC closes the loop in slow mode so the cap is real.
+        constexpr float slow_speed_mps = 1.0f;
 
         constexpr float kp = 20.0f;
         constexpr float ki = 30.0f;
@@ -265,8 +262,7 @@ namespace cfg
     static_assert(PID_CTRL::slow_speed_mps >= PID_CTRL::min_speed_mps &&
                       PID_CTRL::slow_speed_mps <= PID_CTRL::max_speed_mps,
                   "slow-mode cap must sit inside the speed band");
-    static_assert(ESC_10BL60_G2::slow_rc_scale > 0.0f && ESC_10BL60_G2::slow_rc_scale <= 1.0f,
-                  "slow-mode RC scale must be in (0, 1]");
+
     static_assert(ES2845S_4900KV_MOTOR::rpm_filter_alpha > 0.0f &&
                       ES2845S_4900KV_MOTOR::rpm_filter_alpha <= 1.0f,
                   "RPM filter alpha must be in (0, 1]");
