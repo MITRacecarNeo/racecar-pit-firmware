@@ -7,22 +7,55 @@ WS2812B strips, and FlySky iA6B RC receiver. The Pi speaks a binary UART
 protocol to the Teensy and sends normalized drive commands; the Teensy maps them
 to servo and ESC PWM and streams telemetry back.
 
-Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver)
-v0.5.0, which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the
-wire format in `packets.h`.
+Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver),
+which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire
+format in `packets.h` and the version numbers that select a matching pair; see
+[Versioning](#versioning).
 
 ## Table of contents
 
+- [Versioning](#versioning)
 - [Repository layout](#repository-layout)
 - [Branches](#branches)
 - [Wire protocol](#wire-protocol)
 - [Drive control](#drive-control)
 - [Telemetry](#telemetry)
+- [RC receiver](#rc-receiver)
+- [Idle displays](#idle-displays)
 - [Build and flash](#build-and-flash)
 - [Tests](#tests)
 - [Architecture](#architecture)
 - [Changelog](#changelog)
 - [License](#license)
+
+## Versioning
+
+**High priority. The major and minor version here mirror
+[racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver).
+Flash firmware `X.Y.*` to run driver `X.Y.*`.** The patch number is independent
+on each side; a firmware patch fixes something on the Teensy alone.
+
+Rules for cutting a release:
+
+- A change to `packets.h`, the baud rate, or the command semantics is a protocol
+  break. Both repos move to the same next minor, firmware tagged first.
+- A driver minor bump that never touches the link (networking, Coral, ROS nodes)
+  still takes the firmware to that minor, with or without firmware changes, so
+  the pairing stays readable from the tag alone.
+- A firmware-only fix bumps the patch and leaves the minor pinned to the driver.
+- Record the paired driver version in the changelog entry and update the table
+  below.
+
+| Driver | Firmware | Wire format |
+| ------ | -------- | ----------- |
+| 0.7.0 - 0.7.3 | 0.7.0 | unchanged |
+| 0.6.0 | none tagged; run 0.5.0 | unchanged |
+| 0.5.0 - 0.5.1 | 0.5.0 | `TXPacket` 94 B, `RxPacket` 470 B + 4 B magic |
+| 0.4.0 | 0.4.0 | pre-mA current packing |
+| 0.3.0 - 0.3.2 | 0.3.0 | pre-mA current packing |
+
+The firmware skips from `0.5.0` to `0.7.0` to re-align with the driver. There
+is no `0.6.0` firmware tag and there will not be one.
 
 ## Repository layout
 
@@ -82,7 +115,8 @@ Actuation follows an RC-priority, Pi-fallback model with no arm switch:
 - The RC transmitter overrides the Pi whenever a stick's mapped PWM leaves its
   neutral band (`throt_override_band` / `steer_override_band`, 40 us), gated on
   a plausible receiver pulse so a dropped or absent receiver never engages RC.
-  The RC path writes PWM straight through.
+  The RC path writes PWM straight through. See [RC receiver](#rc-receiver) for
+  which stick drives which axis.
 - With the sticks centered or no receiver, a fresh Pi command drives. Steering
   is open loop: a normalized `[-1, 1]` angle maps piecewise across
   `angle_pwm_min`/`angle_pwm_neutral`/`angle_pwm_max`.
@@ -119,6 +153,91 @@ hall intervals and zeroes on a hall-transition timeout (`stop_timeout_us`,
 The `int32` timestamp is `micros()` and wraps every ~35.8 minutes; treat it as a
 wrapping counter.
 
+## RC receiver
+
+The FS-iA6B feeds PPM into pin 5; `RxReceive` copies channels 1-8 into
+`channelVals[0..7]`, so index N-1 is PPM channel N. The transmitter emits AETR
+order.
+
+| Index | PPM ch | Source | Centering | Used by |
+| ----- | ------ | ------ | --------- | ------- |
+| 0 | CH1 | aileron, right stick horizontal | sprung | telemetry only |
+| 1 | CH2 | elevator, right stick vertical | sprung | ESC PWM (`ch_throt`) |
+| 2 | CH3 | throttle, left stick vertical | ratcheted | telemetry only |
+| 3 | CH4 | rudder, left stick horizontal | sprung | steering PWM (`ch_steer`) |
+| 4 | CH5 | swA | switch | speed mode (`ch_speed_mode`) |
+| 5 | CH6 | swB | switch | telemetry only |
+| 6 | CH7 | swC | switch | telemetry only |
+| 7 | CH8 | swD | switch | manual override (`ch_manual_override`) |
+
+Drive reads the two sprung axes: **right stick vertical for throttle, left stick
+horizontal for steering**. The transmitter's own throttle axis (CH3) is
+ratcheted and rests at its low endpoint, so the RC override would read it as a
+held reverse command and lock the Pi out for as long as the transmitter was on.
+Both drive axes now return to center on release.
+
+Which way is forward and which way is left is set on the transmitter (Functions
+> Reverse), not in firmware.
+
+The iA6B has six servo rails, but its PPM stream carries the whole frame, so
+all eight slots populate; CH8 is confirmed live on hardware. `PPMReader` reports
+0 for a channel that is absent, out of band, or stale past its 500 ms failsafe,
+and clamps everything else into 1000-2000 us; `rc_valid_min`/`rc_valid_max`
+(900/2100) therefore only reject the 0 case.
+
+All eight slots are always published, including the two the iA6B never fills;
+narrowing the array would change `TXPacket` and break the wire. See
+[Drive control](#drive-control) for the RC-over-Pi priority rules.
+
+### Switches
+
+The FS-i6 aux order puts swA through swD on CH5 through CH8, all four of which
+arrive over PPM. A pulse at or above `sw_threshold` (1500 us) is up; anything
+below, and any channel that is absent or outside the valid band, is down.
+
+| Switch | Ch | Index | Down | Up |
+| ------ | -- | ----- | ---- | -- |
+| swA | CH5 | 4 | fast: speed capped by `max_speed_mps` (5.0 m/s) | slow: capped at `slow_speed_mps` (1.0 m/s) |
+| swD | CH8 | 7 | Pi autonomy commands accepted | manual override, Teensy drives alone |
+
+Both default to the left column when the receiver is absent, so losing the link
+never leaves the car stuck slow or the Pi locked out. The decode is
+`rcSwitchUp()` in `drive_map.h`, host tested.
+
+Slow mode acts in two places. On the Pi path it clamps the closed-loop setpoint
+to `slow_speed_mps`. The RC path is open loop with no setpoint to clamp, so it
+trims the PWM throw about neutral by `slow_rc_scale`; that scalar is provisional
+and wants a bench pass against a measured 1.0 m/s. Override detection runs on
+the untrimmed throw, so slow mode never makes it harder to grab the car back.
+
+Manual override locks the Pi out of drive entirely: with the sticks centered the
+car holds neutral instead of handing back to autonomy. It also takes the dot
+matrix, which shows `M` while the sticks are live and `I` otherwise; the Pi's
+bitmap and its auto glyph are both suppressed, since `A` has no meaning while
+autonomy is locked out. The LED strip is untouched and the Pi can still drive it.
+
+### Driver agreement
+
+Both switches ride in the existing telemetry RC array, so this needs no protocol
+change. The driver reads the same two channels from `/rc/channels` and applies
+the same threshold: index 4 for speed mode, index 7 for override, up at or above
+1500 us raw (0.0 normalized). While override is up the driver should stop
+publishing drive commands rather than have the Teensy discard them, and in slow
+mode it should cap its own setpoint at 1.0 m/s so the two ends agree on the
+limit instead of fighting over it.
+
+## Idle displays
+
+With no fresh Pi command the dot matrix shows the drive-mode glyph and the LED
+strip shows a red charge bar filling from both ends.
+
+The bar reads state of charge, not volts. A 2S LiPo runs from 8.4 V (4.20
+V/cell) down to 7.0 V (3.50 V/cell), but the curve is flat between roughly 7.6
+and 8.0 V and falls off below 7.4 V, so a bar drawn linearly on voltage sits
+near full for most of a run and then empties in seconds. `battery.h` holds a
+ten-point piecewise-linear approximation of that curve; `batterySocPercent`
+returns 0-100% and the bar length follows it.
+
 ## Build and flash
 
 PlatformIO with the Teensy platform. From `racecar-pit-teensy/`:
@@ -149,6 +268,9 @@ from `racecar-pit-teensy/`:
 pio test -e native
 ```
 
+Fourteen cases over the CRC, the PWM mapping, the hall decode, and the 2S
+state-of-charge curve.
+
 Pi-side schema and CRC tests, from `racecar-pit-pi/`:
 
 ```sh
@@ -168,12 +290,15 @@ the pin assignments.
 
 Latest entries; full history in `docs/changelog.md`.
 
-### [Unreleased]
-- Added: host unit tests, Pi-side pytest suite, wire-size and config-invariant
-  `static_assert`s, `docs/`.
-- Changed: Arduino-free logic split into `crc16` and `drive_map`; `config.h` is
-  now authoritative for the sensor, timing, and RC settings that `helpers.cpp`
-  used to hardcode.
+### [0.7.0] - 2026-09-06
+Pairs with driver v0.7.x; wire format unchanged from 0.5.0.
+- Added: `battery.{h,cpp}` 2S state-of-charge curve, host unit tests, Pi-side
+  pytest suite, wire-size and config-invariant `static_assert`s, `docs/`.
+- Changed: the idle LED bar spans 7.0-8.4 V and fills by charge, not voltage;
+  `cfg::FLYSKY_IA6B_RX` documents the real AETR channel map; long comments
+  trimmed across the firmware; Arduino-free logic split into `crc16` and
+  `drive_map`; `config.h` is now authoritative for the sensor, timing, and RC
+  settings that `helpers.cpp` used to hardcode.
 - Fixed: `initRxHeader` left `FrameBytes` unset and wrote `IDNumber` twice;
   `PiUART.py` had a 2-byte schema mismatch on the telemetry encoder field and
   sent commands with a zero checksum.

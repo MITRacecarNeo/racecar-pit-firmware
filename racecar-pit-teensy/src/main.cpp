@@ -17,8 +17,7 @@ void setup()
   initRxHeader(rxPacketPing.header);
   initRxHeader(rxPacketPong.header);
 
-  // RC-manual endpoints. speed_demon uses the full configured range; otherwise
-  // the percent_* scalars trim the throw around neutral.
+  // speed_demon uses the full range; otherwise percent_* trims the RC throw.
   if (cfg::ESC_10BL60_G2::speed_demon)
   {
     max_pwm_throt = cfg::ESC_10BL60_G2::speed_pwm_max;

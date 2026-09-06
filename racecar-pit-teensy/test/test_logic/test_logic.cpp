@@ -1,13 +1,15 @@
 #include <unity.h>
 
+#include "battery.h"
 #include "crc16.h"
 #include "drive_map.h"
 
-// Bounds mirrored from cfg::SERVO_D135F and cfg::ESC_10BL60_G2. They are
-// restated here so the host test stays free of the Arduino headers config.h
-// pulls in; config.h static_asserts its own ordering invariants.
+// Bounds mirrored from cfg::SERVO_D135F and cfg::ESC_10BL60_G2, restated so the
+// host test stays free of the Arduino headers config.h pulls in.
 static const uint16_t STEER_LO = 1025, STEER_NEU = 1500, STEER_HI = 1975;
 static const uint16_t THROT_LO = 800, THROT_NEU = 1500, THROT_HI = 2200;
+// Mirrored from cfg::AUTO_DRIVE and cfg::FLYSKY_IA6B_RX.
+static const uint16_t RC_LO = 900, RC_HI = 2100, SW_THRESH = 1500;
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -34,8 +36,7 @@ static void test_crc_chunked_matches_single_pass(void)
     TEST_ASSERT_EQUAL_HEX16(whole, chunked);
 }
 
-// A single flipped bit has to change the checksum; this is the property the
-// receive path relies on to drop corrupt frames.
+// The property the receive path relies on to drop corrupt frames.
 static void test_crc_detects_single_bit_flip(void)
 {
     uint8_t msg[16] = {0};
@@ -53,8 +54,8 @@ static void test_map_endpoints_and_center(void)
     TEST_ASSERT_EQUAL_UINT16(STEER_HI, mapNormToPwm(1.0f, STEER_LO, STEER_NEU, STEER_HI));
 }
 
-// The throttle range is asymmetric about neutral (800/1500/2200), so each half
-// has to scale against its own span rather than a shared one.
+// The throttle range is asymmetric about neutral, so each half scales against
+// its own span.
 static void test_map_asymmetric_halves_scale_independently(void)
 {
     TEST_ASSERT_EQUAL_UINT16(1850, mapNormToPwm(0.5f, THROT_LO, THROT_NEU, THROT_HI));
@@ -90,13 +91,80 @@ static void test_hall_sequence_directions(void)
 }
 
 // 0 and 7 are all-low / all-high, which the sensors never produce; a skipped
-// state means a missed edge. Both must report unknown rather than a direction.
+// state means a missed edge. Both report unknown, not a direction.
 static void test_hall_invalid_transitions_report_zero(void)
 {
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(0, 1));
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(1, 7));
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(1, 2));
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(3, 3));
+}
+
+// --------------------------- RC switches -------------------------- //
+
+static void test_rc_pulse_validity_band(void)
+{
+    TEST_ASSERT_TRUE(rcPulseValid(1500, RC_LO, RC_HI));
+    TEST_ASSERT_TRUE(rcPulseValid(RC_LO, RC_LO, RC_HI));
+    TEST_ASSERT_TRUE(rcPulseValid(RC_HI, RC_LO, RC_HI));
+    TEST_ASSERT_FALSE(rcPulseValid(0, RC_LO, RC_HI));
+    TEST_ASSERT_FALSE(rcPulseValid(2500, RC_LO, RC_HI));
+}
+
+static void test_rc_switch_positions(void)
+{
+    TEST_ASSERT_TRUE(rcSwitchUp(2000, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_TRUE(rcSwitchUp(SW_THRESH, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(1499, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(1000, RC_LO, RC_HI, SW_THRESH));
+}
+
+// The safety property behind both switches: an absent channel reads 0, which
+// must resolve to down, so a lost receiver leaves fast mode and autonomy on
+// rather than latching the car slow or locking the Pi out.
+static void test_rc_switch_absent_channel_reads_down(void)
+{
+    TEST_ASSERT_FALSE(rcSwitchUp(0, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(2500, RC_LO, RC_HI, SW_THRESH));
+}
+
+// --------------------------- battery SoC -------------------------- //
+
+static void test_soc_endpoints_and_clamping(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(100, batterySocPercent(batt_full_mv));
+    TEST_ASSERT_EQUAL_UINT8(100, batterySocPercent(9000));
+    TEST_ASSERT_EQUAL_UINT8(0, batterySocPercent(batt_empty_mv));
+    TEST_ASSERT_EQUAL_UINT8(0, batterySocPercent(6000));
+    TEST_ASSERT_EQUAL_UINT8(0, batterySocPercent(0));
+}
+
+static void test_soc_is_monotonic_across_the_band(void)
+{
+    uint8_t prev = 0;
+    for (uint16_t mv = batt_empty_mv; mv <= batt_full_mv; mv += 10)
+    {
+        uint8_t pct = batterySocPercent(mv);
+        TEST_ASSERT_LESS_OR_EQUAL_UINT8(100, pct);
+        TEST_ASSERT_GREATER_OR_EQUAL_UINT8(prev, pct);
+        prev = pct;
+    }
+}
+
+// The point of the curve: the flat 7.6-8.0 V plateau holds most of the usable
+// charge, and below 7.4 V the bar has to be nearly empty. A linear map would
+// read 43% and 29% at these two points.
+static void test_soc_tracks_the_lipo_knee_not_the_voltage(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(40, batterySocPercent(7600));
+    TEST_ASSERT_EQUAL_UINT8(13, batterySocPercent(7400));
+    TEST_ASSERT_TRUE(batterySocPercent(8000) - batterySocPercent(7600) > 30);
+}
+
+static void test_soc_interpolates_between_breakpoints(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(94, batterySocPercent(8300));
+    TEST_ASSERT_EQUAL_UINT8(32, batterySocPercent(7550));
 }
 
 int main(int, char **)
@@ -112,5 +180,12 @@ int main(int, char **)
     RUN_TEST(test_map_stays_inside_bounds_across_sweep);
     RUN_TEST(test_hall_sequence_directions);
     RUN_TEST(test_hall_invalid_transitions_report_zero);
+    RUN_TEST(test_rc_pulse_validity_band);
+    RUN_TEST(test_rc_switch_positions);
+    RUN_TEST(test_rc_switch_absent_channel_reads_down);
+    RUN_TEST(test_soc_endpoints_and_clamping);
+    RUN_TEST(test_soc_is_monotonic_across_the_band);
+    RUN_TEST(test_soc_tracks_the_lipo_knee_not_the_voltage);
+    RUN_TEST(test_soc_interpolates_between_breakpoints);
     return UNITY_END();
 }

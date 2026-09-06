@@ -4,6 +4,111 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-006 - 2026-09-06 (bench)
+
+### Setup
+Same car and transmitter as TL-005, with `ch_manual_override` moved to index 7.
+
+### Hypothesis
+CH8 reaches the Teensy over PPM, so swD drives the manual override.
+
+### Method
+Flip swD and watch the dot matrix and the drive path; exercise every v0.7.0
+feature.
+
+### Observations
+- CH8 arrives and swD drives the override. The six-channel figure for the iA6B
+  counts its servo rails; the PPM stream carries the whole frame, so all eight
+  slots populate. The TL-005 concern does not apply.
+- All v0.7.0 features working: charge bar, slow mode on swA, manual override on
+  swD, dot-matrix I/M under override.
+
+### Conclusion
+Supported. The prediction in TL-005 that CH7 and CH8 might be absent was wrong,
+and the "six channels over PPM" claim is corrected across `config.h`, the
+README, `docs/architecture.md`, and `docs/changelog.md`.
+
+Not separately measured: `slow_rc_scale` against an instrumented 1.0 m/s. Slow
+mode engages and caps the car, but the RC-path scalar is still the provisional
+0.4 rather than a calibrated value.
+
+---
+
+## TL-005 - 2026-09-06 (bench)
+
+### Setup
+Car on the bench with the FS-i6 transmitter and iA6B receiver live, firmware at
+the v0.7.0 branch head. Reported from the robot, not measured here.
+
+### Hypothesis
+The v0.7.0 switch scheme and the charge bar behave on hardware as they do on the
+host, and swA/swD sit on CH5/CH8 as the FS-i6 aux order implies.
+
+### Method
+Flip each switch and watch the dot matrix, the LED strip, and the drive
+response.
+
+### Observations
+- swA (CH5, index 4) selects slow mode; the speed cap engages.
+- LED strip renders the charge bar.
+- The dot matrix switches between I and M on flipping **swB**, not swD. So the
+  override was bound to index 5, and index 5 carries swB.
+- CH5 = swA and CH6 = swB, matching the stock FS-i6 aux assignment.
+
+### Conclusion
+The override mechanism works; only the channel binding was wrong.
+`ch_manual_override` moves from index 5 (CH6, swB) to index 7 (CH8, swD).
+
+---
+
+## TL-004 - 2026-09-06
+
+### Setup
+Host only (no hardware attached). PlatformIO teensy platform, GCC 13 for the
+native environment. Python 3, pytest 9.0.2.
+
+### Hypothesis
+The state-of-charge bar, the RC remap, and the switch scheme leave the firmware
+building and the logic tests green; the SoC curve is monotonic across
+7.0-8.4 V, and an absent switch channel resolves to its permissive position.
+
+### Method
+`pio run`, `pio test -e native`, `python3 -m pytest tests -q` from
+`racecar-pit-pi/`. Firmware size compared against the TL-003 build.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| SoC curve span | 7000 to 8400 | mV |
+| Curve breakpoints | 10 | - |
+| Native test cases | 17 | - |
+| Pytest cases | 13 | - |
+
+### Observations
+- teensy41 build SUCCESS. Flash code 65748 -> 66196 B (+448), data 8676 B
+  unchanged, RAM1 variables 15104 B and RAM2 17568 B both unchanged.
+- Switch decode: pulses of 0 and 2500 us both read down, so a lost receiver
+  leaves fast mode and autonomy enabled.
+- native: 17/17 passed in 0.51 s.
+- pytest: 13/13 passed in 0.05 s.
+- SoC is monotonic over the whole band at 10 mV steps and clamps to 0 and 100
+  outside it.
+- Curve vs a linear voltage map: 7600 mV reads 40% against 43%, 7400 mV reads
+  13% against 29%. The gap is the point of the change.
+
+### Conclusion
+Supported on the host. Not yet run on hardware: the bar has not been watched
+against a discharging pack, and the FS-iA6B channel map in
+`docs/architecture.md` is derived from the code and the receiver spec, not from
+a bench capture. Next action, before any wheels-down run: log CH1-CH8 over
+telemetry with the transmitter on, confirm CH2 and CH4 rest near 1500 us, and
+check that pushing the right stick forward drives forward and left stick left
+steers left. Reverse the affected channel on the transmitter if not. Then
+confirm swA and swD sit on CH5 and CH6 and that each switch's down position
+reads below 1500 us, and calibrate `slow_rc_scale` against a measured 1.0 m/s.
+
+---
+
 ## TL-003 - 2026-09-06
 
 ### Setup
