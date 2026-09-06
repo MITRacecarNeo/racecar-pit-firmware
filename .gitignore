@@ -1,38 +1,45 @@
-# Prerequisites
-*.d
+# PlatformIO
+.pio/
+.cache/
+compile_commands.json
 
-# Compiled Object files
-*.slo
-*.lo
+# Build artifacts
+*.d
 *.o
 *.obj
-
-# Precompiled Headers
 *.gch
 *.pch
-
-# Compiled Dynamic libraries
+*.a
+*.la
+*.lai
+*.lib
 *.so
 *.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
+*.elf
+*.hex
 *.exe
 *.out
-*.app
 
-.pio
-.cache
-.vscode
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
 
-compile_commands.json
+# Secrets and local config
+.env
+.env.*
+secrets/
+*.pem
+id_rsa*
+id_ed25519*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

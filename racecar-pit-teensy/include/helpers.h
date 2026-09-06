@@ -1,111 +1,80 @@
 #pragma once
 #include <Arduino.h>
-
-#include <Arduino.h>
 #include <Servo.h>
 #include <FastLED.h>
 #include <INA226.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
 #include <MD_Parola.h>
-#include "packets.h"
+
 #include "config.h"
-// ----------------------- Variables -------------------------------- //
-extern uint8_t errorFlag, errType;
+#include "crc16.h"
+#include "drive_map.h"
+#include "packets.h"
 
-// ------------- UART-TEENSY-PI --------------- //
+#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 
+// ----------------------- Error state ------------------------------ //
+// 0 none, 1 INA226 absent, 2 LSM9DS1 absent.
+extern uint8_t errorFlag;
+
+// ------------------- UART Teensy <-> Pi --------------------------- //
 extern TXPacket txPacketPing, txPacketPong;
 extern RxPacket rxPacketPing, rxPacketPong;
-extern uint32_t magicNumRx;
-extern uint8_t window[4];
-extern volatile uint32_t lastRxTime;   // micros() of the last CRC-valid Pi command
+extern volatile uint32_t lastRxTime; // micros() of the last CRC-valid Pi command
 
-// --------------------------- RGB LED ---------------------------- //
+// --------------------------- RGB LED ------------------------------ //
 extern CRGB leds[cfg::RGB_LED_WS2812B::num_leds];
-extern uint8_t colorIdx;
-extern uint8_t numleds;
 
-// ------------------- Display command from Pi -------------------- //
+// ------------------- Display command from Pi ---------------------- //
 // Latest dot-matrix bitmap (8x24, row-major, 1=on) and LED strip colors
-// (RGB triplets) copied out of the command frame; SystemState carries the
-// drive mode + per-display active flags (see cfg::SYS_STATE).
-extern bool    dotmatrix_cmd[192];
+// (RGB triplets) copied out of the command frame; system_state carries the
+// drive mode plus the per-display active flags (see cfg::SYS_STATE).
+extern bool dotmatrix_cmd[192];
 extern uint8_t led_cmd[cfg::RGB_LED_WS2812B::num_leds * 3];
 extern uint8_t system_state;
 
-// -------------- Servo and Motor ------------ //
-extern float cmd_setpoint[2];
-extern float cmd_pwm[2];
+// -------------------- Servo and motor ----------------------------- //
+extern float cmd_setpoint[2]; // {steer, throttle} normalized [-1,1] from the Pi
+extern float cmd_pwm[2];      // {steer, throttle} resolved actuation, us
 
-// ------------- ESC_10BL60_G2 --------------- //
-extern uint16_t  max_pwm_throt;
-extern uint16_t  max_pwm_rev;
+// RC-manual endpoints, derived from percent_throt/percent_rev at boot.
+extern uint16_t max_pwm_throt;
+extern uint16_t max_pwm_rev;
 
-// -------------- SERVO_D135F ---------------- //    
-extern uint16_t  max_pwm_left;
-extern uint16_t  max_pwm_right;
-
-// ----------------------------- FlySky IA6B Rx --------------------- //
-
+// ----------------------- FlySky IA6B Rx --------------------------- //
 extern uint16_t channelVals[cfg::FLYSKY_IA6B_RX::channel_count];
-extern uint8_t   drive_mode_sw;
 
-// --------------------------- INA226 Voltage and Current Sensor ------------------------ //
-extern float power[3];  // Current (mA), Voltage (V), Power (mW)
+// ------------- INA226 voltage and current sensor ------------------ //
+extern float power[3]; // current (A), bus voltage (V), power (W)
 
-// ---------------------------- LSM9DS1 9-DOF IMU ----------------------------------------//
-extern sensors_event_t a, m, g, temp;
-extern float imuVals[9];
+// -------------------- LSM9DS1 9-DOF IMU --------------------------- //
+extern float imuVals[9]; // accel xyz, gyro xyz, mag xyz
 
-//------------------------------ MAX 7219 Dot Matrix -------------------------------------//
-#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
-
-// --------------------------------------- Hall - Effect Encoder ---------------------------//
+// ------------------- Hall-effect encoder -------------------------- //
 extern volatile uint32_t lastTransitionTime;
 extern volatile uint32_t deltaTime;
 extern volatile uint8_t currentState;
 extern volatile uint8_t lastState;
 extern volatile int8_t direction;
 extern volatile float lastRPM;
-extern volatile int8_t lastDir;
 
-// -------------------- functions ------------------------ //
-float getCurrentSpeed();
-void InnerControlLoop();
-
-// Map a normalized [-1,1] command to a PWM microsecond value, piecewise about
-// neutral: -1 -> lo, 0 -> neu, +1 -> hi. Result clamped to [lo, hi].
-uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi);
-
-// ------ UART -------- //
-uint16_t crc16_ccitt(const uint8_t* data, size_t len, uint16_t crc = 0xFFFF);
-
+// --------------------------- Threads ------------------------------ //
+// Each of these runs forever under TeensyThreads; started from setup().
 void UARTTx();
 void fillTxBuff();
-
 void UARTRx();
-void fillRxData();
-
-// ----------- Hall Effect -------- //
-int8_t getDirection(uint8_t, uint8_t);
-void onHallChange();
-void getRPM();
-
-// ---------- Current and Voltage Sense --------- //
 void ReadCurrAndVolt();
-
-// ------------ IMU States ------------- //
 void ReadIMUStates();
-
-// ------------- FlySky Receiver ---------- //
 void RxReceive();
-
-// ---------------- ESC and Servo ---------- //
 void testPWM();
-
-// --------------- Dot Matrix ------------- //
 void DotMatrix();
 
-// ----------------- RGB LED -------------- //
+// Called from loop(), not its own thread.
 void ledStuffs();
+
+// --------------------------- Helpers ------------------------------ //
+void fillRxData();
+void onHallChange(); // hall pin ISR
+void getRPM();
+float getCurrentSpeed(); // m/s at the wheels, signed
