@@ -14,6 +14,7 @@ wire format in `packets.h`.
 ## Table of contents
 
 - [Repository layout](#repository-layout)
+- [Branches](#branches)
 - [Wire protocol](#wire-protocol)
 - [Drive control](#drive-control)
 - [Telemetry](#telemetry)
@@ -46,6 +47,14 @@ racecar-pit-pi/
   tests/                pytest suite for the schemas and CRC
 docs/                   architecture, changelog, test log
 ```
+
+## Branches
+
+- `main` is the closed-loop build. The Pi throttle command becomes a wheel-speed
+  setpoint that a PI controller holds against the hall encoder.
+- `pwm-control` targets a car variant with no encoder: actuation is open-loop
+  PWM passthrough, no setpoint and no PID. It is kept on purpose for that
+  hardware and should not be deleted.
 
 ## Wire protocol
 
