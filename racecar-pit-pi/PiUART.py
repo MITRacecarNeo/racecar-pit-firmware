@@ -1,111 +1,167 @@
-import serial
-import struct
-import numpy as np
-import time
-import collections
-import threading
+"""Standalone Pi-side reference for the NEO-PIT UART link.
 
-## ---------------- Formats and Schemas ------------------- ##
-# '>' - Big Endian
-# '<' - Little Endian
-type_map_lil_endian = {
-    "uint8":  '<u1',
-    "int8":   '<i1',
-    "uint16": '<u2',
-    "int16":  '<i2',
-    "uint32": '<u4',
-    "int32":  '<i4',
-    "float":  '<f',
-    "bool":   '<?'
+Mirrors racecar-pit-teensy/include/packets.h. No ROS; the production Pi side
+lives in racecar_neo_ros2_driver (pit_node, pit_protocol.py). Use this to bring
+up or debug the wire link on its own.
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import struct
+import time
+
+import numpy as np
+import serial
+
+DEFAULT_PORT = "/dev/ttyAMA0"
+BAUD_RATE = 921600
+TX_MAGIC = 0xDEADBEEF  # Teensy -> Pi, telemetry
+RX_MAGIC = 0xBEEFDEAD  # Pi -> Teensy, command
+COMMAND_HZ = 60
+NUM_LEDS = 84
+RC_CHANNELS = 8
+
+# '<' little endian, matching the packed structs on the Teensy.
+_T = {
+    "uint8": "<u1",
+    "int8": "<i1",
+    "uint16": "<u2",
+    "int16": "<i2",
+    "uint32": "<u4",
+    "int32": "<i4",
+    "float": "<f4",
+    "bool": "<?",
 }
 
-# CMD_Packet_SCHEMA = np.dtype([
-#     ('deltaStr', type_map_lil_endian['uint16']),
-#     ('deltaThr', type_map_lil_endian['uint16'])
-# ])
+HEADER_SCHEMA = np.dtype(
+    [
+        ("MagicNum", _T["uint32"]),
+        ("VersionNum", _T["uint8"]),
+        ("IDNumber", _T["uint8"]),
+        ("PacketBytes", _T["uint16"]),
+        ("FrameBytes", _T["uint32"]),
+        ("PacketIndex", _T["uint16"]),
+        ("PacketsPerFrame", _T["uint16"]),
+    ]
+)
 
-HEADER_PACKET_SCHEMA = np.dtype([
-    ('MagicNum', type_map_lil_endian['uint32']),
-    ('VersionNum', type_map_lil_endian['uint8']),
-    ('IDNumber', type_map_lil_endian['uint8']),
-    ('PacketBytes', type_map_lil_endian['uint16']),
-    ('FrameBytes', type_map_lil_endian['uint32']),
-    ('PacketIndex', type_map_lil_endian['uint16']),
-    ('PacketsPerFrame', type_map_lil_endian['uint16'])
-])
+HEADER_NO_MAGIC_SCHEMA = np.dtype(
+    [
+        ("VersionNum", _T["uint8"]),
+        ("IDNumber", _T["uint8"]),
+        ("PacketBytes", _T["uint16"]),
+        ("FrameBytes", _T["uint32"]),
+        ("PacketIndex", _T["uint16"]),
+        ("PacketsPerFrame", _T["uint16"]),
+    ]
+)
 
-HEADER_PACKET_NO_MAGIC_SCHEMA = np.dtype([
-    ('VersionNum', type_map_lil_endian['uint8']),
-    ('IDNumber', type_map_lil_endian['uint8']),
-    ('PacketBytes', type_map_lil_endian['uint16']),
-    ('FrameBytes', type_map_lil_endian['uint32']),
-    ('PacketIndex', type_map_lil_endian['uint16']),
-    ('PacketsPerFrame', type_map_lil_endian['uint16'])
-])
+# Teensy -> Pi. The 4 magic bytes are consumed by the sync window, so this
+# schema starts at the byte after them: TXPacket minus MagicNum.
+TELEMETRY_SCHEMA = np.dtype(
+    [
+        ("header", HEADER_NO_MAGIC_SCHEMA),
+        ("Timestamp", _T["int32"]),
+        ("VoltAndCurr", _T["uint16"], 2),
+        ("RxReceiver", _T["uint16"], RC_CHANNELS),
+        ("IMU", _T["float"], 9),
+        ("Encoder", _T["float"]),
+        ("EKF", _T["float"], 3),
+        ("Checksum", _T["uint16"]),
+    ]
+)
 
-RXPACKET_PACKET_SCHEMA = np.dtype([
-    ('header', HEADER_PACKET_NO_MAGIC_SCHEMA),
-    ('Timestamp', type_map_lil_endian['int32']),
-    ('VoltAndCurr', type_map_lil_endian['uint16'], 2),
-    ('RxReceiver', type_map_lil_endian['uint16'], 8),
-    ('IMU', type_map_lil_endian['float'], 9),
-    ('Encoder', type_map_lil_endian['int16']),
-    ('EKF', type_map_lil_endian['float'], 3),
-    ('Checksum', type_map_lil_endian['uint16'])
-])
+# Pi -> Teensy, whole frame including the magic word.
+COMMAND_SCHEMA = np.dtype(
+    [
+        ("header", HEADER_SCHEMA),
+        ("ServoAng", _T["float"]),
+        ("MotorSpeed", _T["float"]),
+        ("DotMatrix", _T["bool"], 192),
+        ("LED", _T["uint8"], 255),
+        ("SystemState", _T["uint8"]),
+        ("Checksum", _T["uint16"]),
+    ]
+)
 
-TXPACKET_PACKET_SCHEMA = np.dtype([
-    ('header', HEADER_PACKET_SCHEMA),
-    ('ServoAng', type_map_lil_endian['float']),
-    ('MotorAng', type_map_lil_endian['float']),
-    ('DotMatrix', type_map_lil_endian['bool'], 192),
-    ('LED', type_map_lil_endian['uint8'], 255),
-    ('SystemState', type_map_lil_endian['uint8']),
-    ('Checksum', type_map_lil_endian['uint16'])
-])
+TELEMETRY_BYTES = TELEMETRY_SCHEMA.itemsize
+COMMAND_BYTES = COMMAND_SCHEMA.itemsize
 
-# steer = int(input("Enter Servo Microseconds : 1025 : 1500 : 1975\n"))
-# throt = int(input("Enter Throttle Microseconds : 750 : 1500 : 2250\n"))
 
-RXPacket = np.zeros(1, dtype = RXPACKET_PACKET_SCHEMA)
+def crc16_ccitt(data: bytes, crc: int = 0xFFFF) -> int:
+    """CRC-16/CCITT-FALSE. Check value over b"123456789" is 0x29B1."""
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
 
-TXPacket = np.zeros(1, dtype = TXPACKET_PACKET_SCHEMA)
-# txPacketPong = np.zeros(1, dtype = TXPACKET_PACKET_SCHEMA)
 
-ser = serial.Serial('/dev/ttyAMA0', 921600, timeout=1)
+def build_command(
+    servo: float = 0.0,
+    motor: float = 0.0,
+    system_state: int = 0,
+) -> np.ndarray:
+    """Command frame with the header filled and the checksum applied.
 
-# ser.write(CMD_Packet.tobytes())
+    servo and motor are normalized to [-1, 1]; the Teensy maps them onto the
+    PWM bounds in config.h.
+    """
+    pkt = np.zeros(1, dtype=COMMAND_SCHEMA)
+    pkt[0]["header"]["MagicNum"] = RX_MAGIC
+    pkt[0]["header"]["VersionNum"] = 1
+    pkt[0]["header"]["PacketBytes"] = COMMAND_BYTES - 4  # struct size on the Teensy
+    pkt[0]["header"]["PacketsPerFrame"] = 1
+    pkt[0]["ServoAng"] = servo
+    pkt[0]["MotorSpeed"] = motor
+    pkt[0]["SystemState"] = system_state
+    pkt[0]["Checksum"] = crc16_ccitt(pkt.tobytes()[:-2])
+    return pkt
 
-window = collections.deque(maxlen=4)  # creates a "window" where can slide along the array for 0xDEADBEEF which is 4 bytes long
 
-TXPacket[0][0][0] = 0xBEEFDEAD
-TXPacket[0][1] = 50
-TXPacket[0][2] = 5
+def telemetry_crc_ok(frame: bytes) -> bool:
+    """Check a telemetry body against its trailing checksum.
 
-lastTime = 0
-interval = 1.0/60.0 # 1 second / 30 Hz
+    The Teensy checksums the magic word too, so it is prepended back on here.
+    """
+    expected = struct.unpack("<H", frame[-2:])[0]
+    return crc16_ccitt(struct.pack("<I", TX_MAGIC) + frame[:-2]) == expected
 
-# UARTTx_thread = threading.Thread(target=send_data)
-# UARTTx_thread.start()
-while True:
-    rxPacket = ser.read(1)
-    if not rxPacket:
-        continue
-    window.append(rxPacket[0])
-    if(len(window) == 4):
-        rxDat = struct.unpack('<L', bytes(window))[0] # outputs tuple, and then extracts the first element
-        # print(f'{rxDat}')
-        if(rxDat == 0xDEADBEEF):
-            # print("yay")
 
-            rxPacket = ser.read(RXPacket.itemsize)
-            rxPacketPing = np.frombuffer(rxPacket, dtype = RXPACKET_PACKET_SCHEMA)[0]
-            print(f'Rx: {rxPacketPing[3]}')  # read from teensy
+def run(port: str, verify_crc: bool) -> None:
+    ser = serial.Serial(port, BAUD_RATE, timeout=1)
+    window: collections.deque[int] = collections.deque(maxlen=4)
+    command = build_command()
+    interval = 1.0 / COMMAND_HZ
+    last_tx = 0.0
 
-    now = time.time()
-    if(now - lastTime >= interval):
-        ser.write(TXPacket[0].tobytes())
-        lastTime = now
-    time.sleep(0.001)
+    while True:
+        byte = ser.read(1)
+        if byte:
+            window.append(byte[0])
+            if len(window) == 4 and struct.unpack("<I", bytes(window))[0] == TX_MAGIC:
+                frame = ser.read(TELEMETRY_BYTES)
+                if len(frame) == TELEMETRY_BYTES and (not verify_crc or telemetry_crc_ok(frame)):
+                    telemetry = np.frombuffer(frame, dtype=TELEMETRY_SCHEMA)[0]
+                    print(f"speed {telemetry['Encoder']:+.2f} m/s  rc {telemetry['RxReceiver']}")
+                window.clear()
 
-# print(f'Sending Servo: {CMD_Packet['deltaStr']} Throt: {CMD_Packet['deltaThr']}')
+        now = time.time()
+        if now - last_tx >= interval:
+            ser.write(command.tobytes())
+            last_tx = now
+        time.sleep(0.001)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", default=DEFAULT_PORT)
+    parser.add_argument("--no-verify-crc", action="store_true")
+    args = parser.parse_args()
+    run(args.port, verify_crc=not args.no_verify_crc)
+
+
+if __name__ == "__main__":
+    main()
