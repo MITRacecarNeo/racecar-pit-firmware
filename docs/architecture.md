@@ -97,9 +97,9 @@ transmitter emits AETR order.
 | 2 | CH3 | Throttle, left stick vertical | ratcheted | telemetry only |
 | 3 | CH4 | Rudder, left stick horizontal | sprung | `ch_steer`, steering PWM |
 | 4 | CH5 | swA | switch | `ch_speed_mode`, fast/slow |
-| 5 | CH6 | swD | switch | `ch_manual_override`, Pi lockout |
-| 6 | CH7 | absent over PPM | - | reads 0 |
-| 7 | CH8 | absent over PPM | - | reads 0 |
+| 5 | CH6 | swB | switch | telemetry only |
+| 6 | CH7 | swC | switch | telemetry only |
+| 7 | CH8 | swD | switch | `ch_manual_override`, Pi lockout |
 
 Drive reads only sprung axes, so both controls return to center on release. CH3
 is the transmitter's own throttle axis and is ratcheted; the RC override in
@@ -127,7 +127,12 @@ permissive position.
 | Switch | Ch | Index | Down | Up | Resolved in |
 | ------ | -- | ----- | ---- | -- | ----------- |
 | swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `testPWM` |
-| swD | CH6 | 5 | Pi autonomy allowed | Teensy-only drive | `testPWM`, `DotMatrix` |
+| swD | CH8 | 7 | Pi autonomy allowed | Teensy-only drive | `testPWM`, `DotMatrix` |
+
+CH5 and CH6 are confirmed on hardware as swA and swB. CH8 sits past the six
+channels a stock iA6B carries over PPM, so the override depends on the link
+being set up to emit eight; an absent channel reads down and the override never
+engages.
 
 `testPWM` publishes both states to `DotMatrix` through the `manual_override` and
 `rc_driving` volatiles. Under override the display shows `M` while the sticks

@@ -4,6 +4,44 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-005 - 2026-09-06 (bench)
+
+### Setup
+Car on the bench with the FS-i6 transmitter and iA6B receiver live, firmware at
+the v0.7.0 branch head. Reported from the robot, not measured here.
+
+### Hypothesis
+The v0.7.0 switch scheme and the charge bar behave on hardware as they do on the
+host, and swA/swD sit on CH5/CH8 as the FS-i6 aux order implies.
+
+### Method
+Flip each switch and watch the dot matrix, the LED strip, and the drive
+response.
+
+### Observations
+- swA (CH5, index 4) selects slow mode; the speed cap engages.
+- LED strip renders the charge bar.
+- The dot matrix switches between I and M on flipping **swB**, not swD. So the
+  override was bound to index 5, and index 5 carries swB.
+- CH5 = swA and CH6 = swB, matching the stock FS-i6 aux assignment.
+
+### Conclusion
+The override mechanism works; only the channel binding was wrong.
+`ch_manual_override` moves from index 5 (CH6, swB) to index 7 (CH8, swD).
+
+Open: a stock iA6B carries six channels over PPM, so CH7 and CH8 may not arrive
+at all. If they do not, the override channel reads 0, resolves to down, and the
+override silently never engages. Next action: read `RxReceiver[6]` and
+`RxReceiver[7]` from telemetry with the transmitter on and confirm CH8 tracks
+swD across both positions before relying on the override. If CH8 is dead, either
+enable eight-channel output on the link or reassign swD onto CH6 in the
+transmitter's aux menu and set `ch_manual_override` back to 5.
+
+Still unverified from TL-004: stick polarity on CH2/CH4, and `slow_rc_scale`
+against a measured 1.0 m/s.
+
+---
+
 ## TL-004 - 2026-09-06
 
 ### Setup

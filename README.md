@@ -166,8 +166,9 @@ order.
 | 2 | CH3 | throttle, left stick vertical | ratcheted | telemetry only |
 | 3 | CH4 | rudder, left stick horizontal | sprung | steering PWM (`ch_steer`) |
 | 4 | CH5 | swA | switch | speed mode (`ch_speed_mode`) |
-| 5 | CH6 | swD | switch | manual override (`ch_manual_override`) |
-| 6-7 | CH7-8 | absent over PPM | - | always 0 |
+| 5 | CH6 | swB | switch | telemetry only |
+| 6 | CH7 | swC | switch | telemetry only |
+| 7 | CH8 | swD | switch | manual override (`ch_manual_override`) |
 
 Drive reads the two sprung axes: **right stick vertical for throttle, left stick
 horizontal for steering**. The transmitter's own throttle axis (CH3) is
@@ -178,11 +179,11 @@ Both drive axes now return to center on release.
 Which way is forward and which way is left is set on the transmitter (Functions
 > Reverse), not in firmware.
 
-The iA6B emits six channels over PPM, so the last two slots stay 0 unless the
-transmitter runs the 10-channel firmware. `PPMReader` reports 0 for a channel
-that is absent, out of band, or stale past its 500 ms failsafe, and clamps
-everything else into 1000-2000 us; `rc_valid_min`/`rc_valid_max` (900/2100)
-therefore only reject the 0 case.
+A stock iA6B carries six channels over PPM, so CH7 and CH8 arrive only if the
+transmitter and receiver are both set up to emit eight. `PPMReader` reports 0
+for a channel that is absent, out of band, or stale past its 500 ms failsafe,
+and clamps everything else into 1000-2000 us; `rc_valid_min`/`rc_valid_max`
+(900/2100) therefore only reject the 0 case.
 
 All eight slots are always published, including the two the iA6B never fills;
 narrowing the array would change `TXPacket` and break the wire. See
@@ -190,14 +191,19 @@ narrowing the array would change `TXPacket` and break the wire. See
 
 ### Switches
 
-Assign swA to CH5 and swD to CH6 in the transmitter's aux menu. A pulse at or
+The FS-i6 aux order puts swA through swD on CH5 through CH8. A pulse at or
 above `sw_threshold` (1500 us) is up; anything below, and any channel that is
 absent or outside the valid band, is down.
 
-| Switch | Ch | Down | Up |
-| ------ | -- | ---- | -- |
-| swA | CH5 | fast: speed capped by `max_speed_mps` (5.0 m/s) | slow: capped at `slow_speed_mps` (1.0 m/s) |
-| swD | CH6 | Pi autonomy commands accepted | manual override, Teensy drives alone |
+swD lands past the six channels a stock iA6B carries over PPM, so the link has
+to be emitting eight channels for the override to arrive. A channel that never
+shows up reads as down, which means the override silently never engages;
+confirm CH8 moves in telemetry before relying on it.
+
+| Switch | Ch | Index | Down | Up |
+| ------ | -- | ----- | ---- | -- |
+| swA | CH5 | 4 | fast: speed capped by `max_speed_mps` (5.0 m/s) | slow: capped at `slow_speed_mps` (1.0 m/s) |
+| swD | CH8 | 7 | Pi autonomy commands accepted | manual override, Teensy drives alone |
 
 Both default to the left column when the receiver is absent, so losing the link
 never leaves the car stuck slow or the Pi locked out. The decode is
@@ -219,7 +225,7 @@ autonomy is locked out. The LED strip is untouched and the Pi can still drive it
 
 Both switches ride in the existing telemetry RC array, so this needs no protocol
 change. The driver reads the same two channels from `/rc/channels` and applies
-the same threshold: index 4 for speed mode, index 5 for override, up at or above
+the same threshold: index 4 for speed mode, index 7 for override, up at or above
 1500 us raw (0.0 normalized). While override is up the driver should stop
 publishing drive commands rather than have the Teensy discard them, and in slow
 mode it should cap its own setpoint at 1.0 m/s so the two ends agree on the

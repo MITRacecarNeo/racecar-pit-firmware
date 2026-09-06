@@ -15,7 +15,7 @@ no 0.6.0 firmware release. See the versioning rules in the README.
 - Two RC switches, sharing one contract with the driver and needing no wire
   change since both ride in the existing telemetry RC array. swA on CH5 selects
   fast (`max_speed_mps`, 5.0 m/s) or slow (`slow_speed_mps`, 1.0 m/s); swD on
-  CH6 selects Pi autonomy or manual override, where the Teensy drives alone and
+  CH8 selects Pi autonomy or manual override, where the Teensy drives alone and
   centered sticks hold neutral instead of handing back to the Pi. Both default
   to the permissive position when the receiver is absent. Under override the dot
   matrix shows `M` with live sticks and `I` otherwise, ignoring the Pi's bitmap

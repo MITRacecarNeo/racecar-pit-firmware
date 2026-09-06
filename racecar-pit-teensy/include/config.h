@@ -97,14 +97,19 @@ namespace cfg
         constexpr uint8_t ch_throt = 1; // CH2 elevator, right stick Y
 
         // Two-position switches, shared with the driver: it reads the same
-        // channels and threshold out of the telemetry RC array. Assign swA to
-        // CH5 and swD to CH6 in the transmitter's aux menu.
+        // channels and threshold out of the telemetry RC array. The FS-i6 aux
+        // order puts swA-swD on CH5-CH8, confirmed on hardware for swA and swB.
         //   ch_speed_mode      down = fast (config cap), up = slow
         //   ch_manual_override down = Pi autonomy allowed, up = RC only
         // Both default to the permissive position when the channel is absent,
         // so losing the receiver never leaves the car slow or locked out.
+        //
+        // swD sits past the six channels the iA6B carries over PPM, so the
+        // transmitter and receiver have to be emitting eight for the override
+        // to arrive at all; a channel that never shows up reads as down and the
+        // override silently never engages. Verify against telemetry.
         constexpr uint8_t ch_speed_mode = 4;      // CH5, swA
-        constexpr uint8_t ch_manual_override = 5; // CH6, swD
+        constexpr uint8_t ch_manual_override = 7; // CH8, swD
         constexpr uint16_t sw_threshold = 1500;   // us, at or above = switch up
 
         // PPMReader clamps valid pulses into this band and reports 0 for a
