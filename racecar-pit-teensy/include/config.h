@@ -3,6 +3,8 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
 
+#include "battery.h"
+
 // All tunables live here. Nothing in src/ should hardcode a value that belongs
 // in this file.
 namespace cfg
@@ -16,17 +18,16 @@ namespace cfg
         constexpr uint16_t tx_freq = 200;    // Hz, telemetry rate
         constexpr uint32_t rx_timeout = 50;  // ms, command staleness -> neutral
         constexpr bool verify_rx_crc = true; // drop command frames failing CRC-16
-        // Serial1 RX FIFO. The default 64 bytes overflows mid-frame: a 474-byte
-        // command at 921600 baud fills 64 bytes in ~0.7 ms, and UARTRx can be
-        // preempted longer than that under the thread scheduler.
+        // The default 64-byte Serial1 FIFO overflows mid-frame: a 474-byte
+        // command at 921600 baud fills it in ~0.7 ms, less than UARTRx can be
+        // preempted for.
         constexpr size_t rx_buffer_bytes = 2048;
     }
 
     namespace DEBUG
     {
         constexpr uint32_t usb_baud = 115200;
-        // Teleplot-style control-loop trace on the USB serial port. Off by
-        // default; the trace runs inside the 1 kHz actuation loop.
+        // Teleplot trace on USB serial; runs inside the 1 kHz actuation loop.
         constexpr bool serial_plot = false;
     }
 
@@ -42,15 +43,13 @@ namespace cfg
         constexpr uint8_t motor_pin = 3;
         constexpr bool speed_demon = false;
 
-        // RC-manual throw as a fraction of the configured range, applied around
-        // neutral when speed_demon is off.
+        // RC-manual throw as a fraction of the range, when speed_demon is off.
         constexpr float percent_throt = 0.25;
         constexpr float percent_rev = 0.25;
 
-        // PWM safety bounds. Tighten min/max to protect the drivetrain; the Pi
-        // does not scale the range (its throttle scaling is 1), so the Teensy
-        // owns the physical limits.
-        constexpr uint16_t speed_pwm_min = 800;      // us, full-reverse bound; deeper than a symmetric 1000 to clear the ESC reverse deadband
+        // PWM safety bounds. The Pi does not scale the range, so the Teensy owns
+        // the physical limits.
+        constexpr uint16_t speed_pwm_min = 800;      // us, full-reverse bound; deeper than 1000 to clear the ESC reverse deadband
         constexpr uint16_t speed_pwm_neutral = 1500; // us, ESC arm / neutral
         constexpr uint16_t speed_pwm_max = 2200;     // us, full-forward bound
 
@@ -75,11 +74,25 @@ namespace cfg
     namespace FLYSKY_IA6B_RX
     {
         constexpr uint8_t ppm_pin = 5;
+        // PPM frame width. The iA6B emits 6 channels over PPM; slots 7 and 8
+        // stay 0 unless the transmitter is running the 10-channel firmware.
         constexpr uint8_t channel_count = 8;
-        // Channel indices into channelVals[], zero-based.
-        constexpr uint8_t ch_steer = 0;      // aileron
-        constexpr uint8_t ch_throt = 2;      // throttle
-        constexpr uint8_t ch_drive_mode = 4; // SWA, selects reverse under speed_demon
+
+        // Zero-based indices into channelVals[]. AETR order, so PPM channel N
+        // is index N-1: 0 aileron (right stick X), 1 elevator (right stick Y),
+        // 2 throttle (left stick Y), 3 rudder (left stick X), 4-5 the two aux
+        // channels the transmitter assigns (SwA/SwB or VrA/VrB).
+        //
+        // Drive reads the two self-centering axes: right stick Y for throttle,
+        // left stick X for steering. The transmitter's own throttle axis (CH3,
+        // left stick Y) is ratcheted and rests at its low endpoint, which the
+        // RC override in testPWM would read as a held reverse command.
+        constexpr uint8_t ch_steer = 3;      // CH4 rudder, left stick X
+        constexpr uint8_t ch_throt = 1;      // CH2 elevator, right stick Y
+        constexpr uint8_t ch_drive_mode = 4; // CH5 aux, selects reverse under speed_demon
+
+        // PPMReader clamps valid pulses into this band and reports 0 for a
+        // channel that is absent or stale past its 500 ms failsafe.
         constexpr uint16_t pulse_min = 1000; // us
         constexpr uint16_t pulse_max = 2000; // us
     }
@@ -124,31 +137,25 @@ namespace cfg
 
     namespace AUTO_DRIVE
     {
-        // Drive priority: the RC transmitter overrides the Pi whenever a stick
-        // leaves its neutral band. With the sticks centered (or no receiver),
-        // the Pi command stream drives as the fallback.
-        // RC-active detection: |RC-commanded PWM - neutral| beyond this -> human driving.
+        // The RC transmitter takes priority whenever a stick output leaves its
+        // neutral band; otherwise the Pi command stream drives.
         constexpr uint16_t throt_override_band = 40; // us around speed_pwm_neutral
         constexpr uint16_t steer_override_band = 40; // us around angle_pwm_neutral
-        // Plausible RC pulse band; outside it the receiver is treated as absent.
+        // Outside this band the receiver is treated as absent. PPMReader only
+        // ever reports 0 or 1000-2000, so in practice this rejects the 0.
         constexpr uint16_t rc_valid_min = 900;  // us
         constexpr uint16_t rc_valid_max = 2100; // us
     }
 
     namespace DISP
     {
-        // Dot matrix + LED behavior. When the Pi stops sending fresh command
-        // frames (driver down), the Teensy falls back to idle defaults.
         constexpr uint32_t cmd_timeout_ms = 1000; // Pi command staleness -> idle defaults
-        constexpr uint32_t led_load_ms = 10000;   // rainbow "loading" sweep duration on Pi connect
-        // Idle LED voltage bar endpoints, centivolts.
-        constexpr int volt_bar_min_cv = 750;
-        constexpr int volt_bar_max_cv = 840;
+        constexpr uint32_t led_load_ms = 10000;   // rainbow sweep duration on Pi connect
+        // The idle LED bar reads charge, not volts; endpoints and the 2S curve
+        // live in battery.h (batt_empty_mv / batt_full_mv).
     }
 
-    // Bit layout of RxPacket.SystemState (Pi -> Teensy): the low two bits carry
-    // the drive mode for the dot-matrix glyph; two flag bits say whether the Pi
-    // is actively driving each display so the Teensy knows when to show defaults.
+    // Bit layout of RxPacket.SystemState (Pi -> Teensy).
     namespace SYS_STATE
     {
         constexpr uint8_t mode_mask = 0x03; // 0 idle, 1 manual, 2 auto
@@ -179,14 +186,14 @@ namespace cfg
 
     namespace PID_CTRL
     {
-        // The Pi sends a normalized [-1,1] throttle; it maps onto this speed
-        // band and a PI controller on the hall encoder holds it.
+        // The normalized [-1,1] Pi throttle maps onto this band; a PI controller
+        // on the hall encoder holds the setpoint.
         constexpr float max_speed_mps = 5.0f;  // top speed at full joystick
         constexpr float min_speed_mps = 0.75f; // crawl speed at minimum joystick
 
         constexpr float kp = 20.0f;
         constexpr float ki = 30.0f;
-        constexpr float max_integral = 150.0f; // anti-windup limit, heavy to bridge the deadband gap
+        constexpr float max_integral = 150.0f; // anti-windup limit
         constexpr float kd = 0.0f;
         constexpr float kd_filter_alpha = 0.05f;
 
@@ -200,14 +207,14 @@ namespace cfg
         constexpr float kp_boost = 60.0f;
         constexpr float err_threshold = 0.25f;
 
-        // Extra reverse PWM applied while the wheels are still, to break static
-        // friction; the reverse deadband is too wide for the PI term alone.
+        // Breaks static friction from a standstill; the reverse deadband is too
+        // wide for the PI term alone.
         constexpr float stiction_kick_rev_us = 100.0f;
         constexpr float stiction_speed_mps = 0.05f; // below this the wheels count as stopped
     }
 
-    // Invariants the actuation math assumes. A bad edit here is a runaway
-    // servo or ESC, so catch it at compile time.
+    // Invariants the actuation math assumes. A bad edit here is a runaway servo
+    // or ESC, so catch it at compile time.
     static_assert(ESC_10BL60_G2::speed_pwm_min < ESC_10BL60_G2::speed_pwm_neutral &&
                       ESC_10BL60_G2::speed_pwm_neutral < ESC_10BL60_G2::speed_pwm_max,
                   "ESC PWM bounds must be ordered min < neutral < max");
@@ -226,6 +233,8 @@ namespace cfg
                       FLYSKY_IA6B_RX::ch_throt < FLYSKY_IA6B_RX::channel_count &&
                       FLYSKY_IA6B_RX::ch_drive_mode < FLYSKY_IA6B_RX::channel_count,
                   "RC channel indices must fit channelVals[]");
+    static_assert(FLYSKY_IA6B_RX::ch_steer != FLYSKY_IA6B_RX::ch_throt,
+                  "steering and throttle must read different RC channels");
     static_assert(ES2845S_4900KV_MOTOR::rpm_filter_alpha > 0.0f &&
                       ES2845S_4900KV_MOTOR::rpm_filter_alpha <= 1.0f,
                   "RPM filter alpha must be in (0, 1]");

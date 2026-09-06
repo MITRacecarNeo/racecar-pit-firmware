@@ -3,10 +3,9 @@
 
 #include "config.h"
 
-// Wire format. This file is the authority for both ends of the link; the Pi
-// driver mirrors it in pit_protocol.py. Every struct is packed little-endian,
-// and the trailing Checksum field is CRC-16/CCITT-FALSE over all preceding
-// bytes of the frame as sent.
+// Wire format, authoritative for both ends; the Pi driver mirrors it in
+// pit_protocol.py. Packed little-endian, with a trailing CRC-16/CCITT-FALSE
+// over every preceding byte of the frame as sent.
 
 // Teensy --> Pi
 struct HeaderPacket {
@@ -19,8 +18,8 @@ struct HeaderPacket {
   uint16_t PacketsPerFrame;
 }__attribute__((packed));
 
-// Teensy <-- Pi. The magic word is matched by the byte-sliding window in
-// UARTRx, so it is not part of the struct.
+// Teensy <-- Pi. UARTRx matches the magic word with a byte-sliding window, so
+// it is not part of the struct.
 struct HeaderPacketNoMagic {
   uint8_t VersionNum;
   uint8_t IDNumber;
@@ -53,11 +52,8 @@ struct RxPacket {
   uint16_t Checksum;
 }__attribute__((packed));
 
-// FrameBytes/PacketIndex/PacketsPerFrame describe multi-packet framing that the
-// current single-packet protocol does not use; they are pinned so the header
-// bytes on the wire stay deterministic.
-// Wire sizes the Pi driver depends on. A change here is a protocol break and
-// must land in pit_protocol.py at the same time.
+// A change here is a protocol break and must land in pit_protocol.py at the
+// same time, under a matching minor version in both repos.
 static_assert(sizeof(HeaderPacket) == 16, "TX header size changed");
 static_assert(sizeof(HeaderPacketNoMagic) == 12, "RX header size changed");
 static_assert(sizeof(TXPacket) == 94, "telemetry packet size changed");

@@ -4,6 +4,49 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-004 - 2026-09-06
+
+### Setup
+Host only (no hardware attached). PlatformIO teensy platform, GCC 13 for the
+native environment. Python 3, pytest 9.0.2.
+
+### Hypothesis
+The state-of-charge bar and the comment pass leave the firmware building and the
+logic tests green, and the SoC curve is monotonic across 7.0-8.4 V.
+
+### Method
+`pio run`, `pio test -e native`, `python3 -m pytest tests -q` from
+`racecar-pit-pi/`. Firmware size compared against the TL-003 build.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| SoC curve span | 7000 to 8400 | mV |
+| Curve breakpoints | 10 | - |
+| Native test cases | 14 | - |
+| Pytest cases | 13 | - |
+
+### Observations
+- teensy41 build SUCCESS. Flash code 65748 -> 65876 B (+128), data 8676 B
+  unchanged, RAM1 variables 15104 B and RAM2 17568 B both unchanged.
+- native: 14/14 passed in 0.62 s.
+- pytest: 13/13 passed in 0.05 s.
+- SoC is monotonic over the whole band at 10 mV steps and clamps to 0 and 100
+  outside it.
+- Curve vs a linear voltage map: 7600 mV reads 40% against 43%, 7400 mV reads
+  13% against 29%. The gap is the point of the change.
+
+### Conclusion
+Supported on the host. Not yet run on hardware: the bar has not been watched
+against a discharging pack, and the FS-iA6B channel map in
+`docs/architecture.md` is derived from the code and the receiver spec, not from
+a bench capture. Next action, before any wheels-down run: log CH1-CH8 over
+telemetry with the transmitter on, confirm CH2 and CH4 rest near 1500 us, and
+check that pushing the right stick forward drives forward and left stick left
+steers left. Reverse the affected channel on the transmitter if not.
+
+---
+
 ## TL-003 - 2026-09-06
 
 ### Setup

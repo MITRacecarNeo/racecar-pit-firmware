@@ -30,6 +30,7 @@ allocation after boot.
 | `racecar-pit-teensy/include/Mutexes.h`    | Lock declarations, one per shared resource                   | TeensyThreads             |
 | `racecar-pit-teensy/include/crc16.h`      | CRC-16/CCITT-FALSE, Arduino-free                             | none                      |
 | `racecar-pit-teensy/include/drive_map.h`  | Normalized-to-PWM mapping, hall direction decode; Arduino-free| none                      |
+| `racecar-pit-teensy/include/battery.h`    | 2S LiPo voltage-to-charge curve; Arduino-free                | none                      |
 | `racecar-pit-teensy/src/main.cpp`         | Boot: peripherals, interrupts, thread launch                 | `helpers.h`               |
 | `racecar-pit-teensy/src/helpers.cpp`      | Threads: telemetry, command RX, sensors, actuation, displays | all of the above          |
 | `racecar-pit-pi/PiUART.py`                | Standalone Pi-side link reference; no ROS                    | numpy, pyserial           |
@@ -83,6 +84,39 @@ applies the two gear ratios and the wheel circumference to reach m/s at the
 ground, which is what the encoder field carries and what the speed loop closes
 on.
 
+## RC receiver mapping
+
+The FS-iA6B feeds PPM into pin 5. `PPMReader` decodes it and `RxReceive` copies
+channels 1-8 into `channelVals[0..7]`, so index N-1 is PPM channel N. The
+transmitter emits AETR order.
+
+| Index | PPM ch | Transmitter source (FS-i6 default) | Centering | Used by |
+| ----- | ------ | ---------------------------------- | --------- | ------- |
+| 0 | CH1 | Aileron, right stick horizontal | sprung | telemetry only |
+| 1 | CH2 | Elevator, right stick vertical | sprung | `ch_throt`, ESC PWM |
+| 2 | CH3 | Throttle, left stick vertical | ratcheted | telemetry only |
+| 3 | CH4 | Rudder, left stick horizontal | sprung | `ch_steer`, steering PWM |
+| 4 | CH5 | Aux 1 (SwA or VrA) | switch | `ch_drive_mode`, reverse under `speed_demon` |
+| 5 | CH6 | Aux 2 (SwB or VrB) | switch | telemetry only |
+| 6 | CH7 | absent over PPM | - | reads 0 |
+| 7 | CH8 | absent over PPM | - | reads 0 |
+
+Drive reads only sprung axes, so both controls return to center on release. CH3
+is the transmitter's own throttle axis and is ratcheted; the RC override in
+`testPWM` treats any output past `throt_override_band` as a human at the
+controls, so a stick resting at its low endpoint would hold the car in reverse
+and lock out the Pi. Stick polarity is set on the transmitter, not in firmware.
+
+`latestValidChannelValue(ch, 0)` returns 0 for a channel that is absent, out of
+band, or stale past the library's 500 ms failsafe; otherwise it clamps into
+1000-2000 us. So `channelVals[i]` is either 0 or a clamped pulse width, and
+`rc_valid_min`/`rc_valid_max` (900/2100) reject only the 0 case.
+
+All eight slots are republished raw over telemetry (`TXPacket.RxReceiver`), the
+two unfilled ones included, and the driver normalizes all eight in
+`pit_protocol.Telemetry.rc_normalized`. The array width is fixed by the wire
+format, so dropping the dead slots would be a protocol break.
+
 ## Interfaces
 
 | Interface | Pins / device                     | Defined in                     |
@@ -119,6 +153,9 @@ runtime meaning on a microcontroller: all tunables are compile-time constants in
   neutral. The RC transmitter overrides the Pi whenever a stick leaves its
   neutral band and a plausible pulse is present, so a dead receiver holds
   neutral instead of reading as full reverse.
+- The idle LED bar reads state of charge from the 2S curve in `battery.h`, not
+  raw volts. A linear voltage bar sat near full through the flat part of the
+  discharge curve and then emptied within seconds.
 - Current is packed as mA in a `uint16`, covering 0 to 65.5 A against an 8 A
   shunt setting; negative current clamps to 0.
 - Telemetry timestamps are `micros()` in an `int32`, so they wrap every ~35.8
