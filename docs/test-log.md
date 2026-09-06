@@ -4,6 +4,45 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-007 - 2026-09-06
+
+### Setup
+Host only. PlatformIO teensy platform, GCC 13 native.
+
+### Hypothesis
+Rescaling the stick onto the slow-mode cap makes full throttle an exact
+`slow_speed_mps` setpoint, and closing the loop on RC in slow mode leaves the
+fast-mode RC path unchanged.
+
+### Method
+`pio run`, `pio test -e native`, `python3 -m pytest tests -q`.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| slow_speed_mps | 1.0 | m/s |
+| max_speed_mps | 5.0 | m/s |
+| min_speed_mps | 0.75 | m/s |
+| Native test cases | 21 | - |
+
+### Observations
+- teensy41 build SUCCESS. Flash code 66196 -> 66388 B (+192); RAM1 15104 B and
+  RAM2 17568 B unchanged.
+- native: 21/21 passed in 0.57 s. Four new cases on `throttleToTargetMps`.
+- Full stick returns the cap exactly in both modes: 5.0 and 1.0 m/s, and their
+  negatives.
+- Half stick in slow mode lands strictly between 0.75 and 1.0 m/s, so the map
+  rescales rather than clipping; the clamp it replaced pinned everything above
+  roughly 0.06 stick at the cap.
+
+### Conclusion
+Supported on the host. Not measured on hardware: whether the closed loop
+actually settles at 1.0 m/s under RC, which is the point of the change. Next
+action: drive in slow mode with `cfg::DEBUG::serial_plot` on and compare
+Target_MPS against Measured_MPS.
+
+---
+
 ## TL-006 - 2026-09-06 (bench)
 
 ### Setup

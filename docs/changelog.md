@@ -5,6 +5,33 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-06
+
+Pairs with `racecar_neo_ros2_driver` v0.7.x. Wire format unchanged.
+
+### Changed
+- Slow mode (swA up) is an exact 1.0 m/s setpoint on both the Pi and the RC
+  path. It rescales the full stick travel onto `slow_speed_mps` rather than
+  clipping the top of the fast-mode range, so stick resolution stays usable and
+  full throttle lands on the cap exactly.
+- RC slow mode closes the loop on the hall encoder, running the stick through
+  the same PI controller as the Pi path. A speed cap in m/s cannot be held open
+  loop. Fast-mode RC keeps the direct PWM path, so a human override there is
+  still instant.
+- `throttleToTargetMps` moves into `drive_map.{h,cpp}` with the deadband and
+  both speed endpoints as parameters, and is host tested.
+
+### Removed
+- `cfg::ESC_10BL60_G2::slow_rc_scale`, the open-loop PWM trim that stood in for
+  a speed cap on the RC path. It was a provisional 0.4 that was never calibrated
+  and could not hold a speed under load.
+
+### Notes
+- The Teensy accepts, CRC-checks, and stores Pi command frames regardless of
+  either switch; manual override is applied at actuation only. The Pi is never
+  blocked by the switch state and drive resumes on the next frame when override
+  drops, so acting on the switches driver-side is optional.
+
 ## [0.7.0] - 2026-09-06
 
 Pairs with `racecar_neo_ros2_driver` v0.7.x. The wire format is unchanged from
@@ -25,9 +52,8 @@ no 0.6.0 firmware release. See the versioning rules in the README.
 - `battery.{h,cpp}`: 2S LiPo state of charge from pack voltage, piecewise-linear
   over a ten-point discharge curve (3.50 to 4.20 V/cell), Arduino-free and host
   tested.
-- Host unit tests (`pio test -e native`, 17 cases) over the CRC, the
-  normalized-to-PWM mapping, the hall direction decode, the RC switch decode,
-  and the SoC curve.
+- Host unit tests (`pio test -e native`) over the CRC, the normalized-to-PWM
+  mapping, the hall direction decode, the RC switch decode, and the SoC curve.
 - Pytest suite for the Pi-side reference (`racecar-pit-pi/tests/`, 13 cases),
   including schema sizes checked against the firmware packet sizes.
 - `static_assert` on every wire struct size in `packets.h` and on the PWM,
