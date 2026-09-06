@@ -3,6 +3,11 @@
 
 #include "config.h"
 
+// Wire format. This file is the authority for both ends of the link; the Pi
+// driver mirrors it in pit_protocol.py. Every struct is packed little-endian,
+// and the trailing Checksum field is CRC-16/CCITT-FALSE over all preceding
+// bytes of the frame as sent.
+
 // Teensy --> Pi
 struct HeaderPacket {
   uint32_t MagicNum;
@@ -14,7 +19,8 @@ struct HeaderPacket {
   uint16_t PacketsPerFrame;
 }__attribute__((packed));
 
-// Teensy <-- Pi
+// Teensy <-- Pi. The magic word is matched by the byte-sliding window in
+// UARTRx, so it is not part of the struct.
 struct HeaderPacketNoMagic {
   uint8_t VersionNum;
   uint8_t IDNumber;
@@ -27,31 +33,42 @@ struct HeaderPacketNoMagic {
 // Teensy --> Pi
 struct TXPacket {
   HeaderPacket header;
-  int32_t Timestamp;
-  uint16_t VoltAndCurr[2];
-  uint16_t RxReceiver[cfg::FLYSKY_IA6B_RX::channel_count];
-  float IMU[9];
-  float Encoder;
-  float EKF[3];
+  int32_t Timestamp;                                        // micros()
+  uint16_t VoltAndCurr[2];                                  // bus mV, current mA
+  uint16_t RxReceiver[cfg::FLYSKY_IA6B_RX::channel_count];  // raw pulse widths, us
+  float IMU[9];                                             // accel xyz, gyro xyz, mag xyz
+  float Encoder;                                            // ground speed, m/s
+  float EKF[3];                                             // reserved: dx, dy, dtheta
   uint16_t Checksum;
 } __attribute__((packed));
 
 // Teensy <-- Pi
 struct RxPacket {
   HeaderPacketNoMagic header;
-  float ServoAng;
-  float MotorSpeed;
-  bool DotMatrix[192];
-  uint8_t LED [255];
-  uint8_t SystemState;
+  float ServoAng;      // normalized [-1,1], -1 = full left
+  float MotorSpeed;    // normalized [-1,1], -1 = full reverse
+  bool DotMatrix[192]; // 8x24 bitmap, row-major, 1 = on
+  uint8_t LED[255];    // RGB triplets, one per LED
+  uint8_t SystemState; // see cfg::SYS_STATE
   uint16_t Checksum;
 }__attribute__((packed));
 
+// FrameBytes/PacketIndex/PacketsPerFrame describe multi-packet framing that the
+// current single-packet protocol does not use; they are pinned so the header
+// bytes on the wire stay deterministic.
+// Wire sizes the Pi driver depends on. A change here is a protocol break and
+// must land in pit_protocol.py at the same time.
+static_assert(sizeof(HeaderPacket) == 16, "TX header size changed");
+static_assert(sizeof(HeaderPacketNoMagic) == 12, "RX header size changed");
+static_assert(sizeof(TXPacket) == 94, "telemetry packet size changed");
+static_assert(sizeof(RxPacket) == 470, "command packet size changed");
+
 inline void initTxHeader(HeaderPacket &h) {
-  h.MagicNum          = cfg::UART::tx_magic_num ;
+  h.MagicNum          = cfg::UART::tx_magic_num;
   h.VersionNum        = 1;
   h.IDNumber          = 0;
   h.PacketBytes       = sizeof(TXPacket);
+  h.FrameBytes        = 0;
   h.PacketIndex       = 0;
   h.PacketsPerFrame   = 1;
 }
@@ -59,8 +76,8 @@ inline void initTxHeader(HeaderPacket &h) {
 inline void initRxHeader(HeaderPacketNoMagic &h) {
   h.VersionNum        = 1;
   h.IDNumber          = 0;
-  h.IDNumber          = 0;
   h.PacketBytes       = sizeof(RxPacket);
+  h.FrameBytes        = 0;
   h.PacketIndex       = 0;
   h.PacketsPerFrame   = 1;
 }

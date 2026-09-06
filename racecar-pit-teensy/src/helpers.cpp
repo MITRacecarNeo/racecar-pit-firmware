@@ -11,107 +11,77 @@
 #include <Adafruit_LSM9DS1.h>
 #include <MD_Parola.h>
 
-#include "helpers.h"
-#include "packets.h"
-#include "Mutexes.h"
 #include "config.h"
+#include "crc16.h"
+#include "drive_map.h"
+#include "helpers.h"
+#include "Mutexes.h"
+#include "packets.h"
 
-// ----------------------- Variables -------------------------------- //
-uint8_t errorFlag = 0, errType;
+// ----------------------- Error state ------------------------------ //
+uint8_t errorFlag = 0;
 
-// ------------- UART-TEENSY-PI --------------- //
+// ------------------- UART Teensy <-> Pi --------------------------- //
 TXPacket txPacketPing, txPacketPong;
 RxPacket rxPacketPing, rxPacketPong;
-
-uint32_t magicNumRx;
-uint8_t window[4] = {0, 0, 0, 0};
 volatile uint32_t lastRxTime = 0;
 
-// --------------------------- RGB LED ---------------------------- //
+// --------------------------- RGB LED ------------------------------ //
 CRGB leds[cfg::RGB_LED_WS2812B::num_leds];
-CRGBPalette16 currrentPalette = RainbowStripeColors_p;
-uint8_t colorIdx = 1;
-uint8_t numleds;
 
-// ------------------- Display command from Pi -------------------- //
+// ------------------- Display command from Pi ---------------------- //
 bool dotmatrix_cmd[192] = {false};
 uint8_t led_cmd[cfg::RGB_LED_WS2812B::num_leds * 3] = {0};
 uint8_t system_state = 0;
 
-// -------------- Servo and Motor ------------ //
-Servo steerServo, throtMot;
+// -------------------- Servo and motor ----------------------------- //
+static Servo steerServo, throtMot;
 float cmd_setpoint[2];
 float cmd_pwm[2];
-// ------------- ESC_10BL60_G2 --------------- //
 uint16_t max_pwm_throt;
 uint16_t max_pwm_rev;
 
-// -------------- SERVO_D135F ---------------- //
-uint16_t max_pwm_left;
-uint16_t max_pwm_right;
-
-// ----------------------------- FlySky IA6B Rx --------------------- //
-// Range between 1000 - 2000 us {Aileron, Elevator, Throttle, Rudder, SWA, SWB, SWC, SWD, Ch9, Ch10} //
+// ----------------------- FlySky IA6B Rx --------------------------- //
+// Range 1000-2000 us: {Aileron, Elevator, Throttle, Rudder, SWA, SWB, SWC, SWD}
 uint16_t channelVals[cfg::FLYSKY_IA6B_RX::channel_count] = {0, 0, 0, 0, 0, 0, 0, 0};
-uint8_t drive_mode_sw;
 
-// --------------------------- INA226 Voltage and Current Sensor ------------------------ //
-INA226 INA(cfg::INA226_SENSOR::i2c_addy);
-float power[3] = {0, 0, 0}; // Current (mA), Voltage (V), Power (mW)
+// ------------- INA226 voltage and current sensor ------------------ //
+static INA226 INA(cfg::INA226_SENSOR::i2c_addy);
+float power[3] = {0, 0, 0};
 
-// ---------------------------- LSM9DS1 9-DOF IMU ----------------------------------------//
-Adafruit_LSM9DS1 lsmimu = Adafruit_LSM9DS1();
-sensors_event_t a, m, g, temp;
+// -------------------- LSM9DS1 9-DOF IMU --------------------------- //
+static Adafruit_LSM9DS1 lsmimu = Adafruit_LSM9DS1();
+static sensors_event_t a, m, g, temp;
 float imuVals[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
 
-//------------------------------ MAX 7219 Dot Matrix -------------------------------------//
-#define HARDWARE_TYPE MD_MAX72XX::FC16_HW
-MD_Parola mx = MD_Parola(HARDWARE_TYPE, cfg::MAX_7219_DOT_MATRIX::cs_pin, cfg::MAX_7219_DOT_MATRIX::num_matrix);
+// ---------------------- MAX7219 dot matrix ------------------------ //
+static MD_Parola mx = MD_Parola(HARDWARE_TYPE, cfg::MAX_7219_DOT_MATRIX::cs_pin, cfg::MAX_7219_DOT_MATRIX::num_matrix);
 
-// --------------------------------------- Hall - Effect Encoder ---------------------------//
+// ------------------- Hall-effect encoder -------------------------- //
 volatile uint32_t lastTransitionTime = 0;
 volatile uint32_t deltaTime = 0;
 volatile uint8_t currentState = 0;
 volatile uint8_t lastState = 0;
 volatile int8_t direction = 0;
-volatile float lastRPM;
-volatile int8_t lastDir;
+volatile float lastRPM = 0;
 
-// ----------------- Thread Mutexes ----------------------- //
-Threads::Mutex CmdMutex;       // for use with cmd_packet}{}
-Threads::Mutex RxMutex;        // for use with channelVals[]
-Threads::Mutex I2CMutex;       // for use with I2C bus
-Threads::Mutex SPIMutex;       // for use with SPI bus
-Threads::Mutex PowerMutex;     // for use with power[]
-Threads::Mutex ErrMutex;       // for use with errorFlag
-Threads::Mutex ImuMutex;       // for use with imuVals[]
-Threads::Mutex HallMutex;      // for use with currentState
-Threads::Mutex TransmitMutex;  // for use with txPacketPing
-Threads::Mutex RecieveMutex;   // for use with rxPacketPing
-Threads::Mutex TransPongMutex; // for use with txPacketPong
-Threads::Mutex RecPongMutex;   // for use with rxPacketPong
-Threads::Mutex SerMutex;       // for use with Serial1
+// ------------------------ Thread mutexes -------------------------- //
+Threads::Mutex CmdMutex;
+Threads::Mutex RxMutex;
+Threads::Mutex I2CMutex;
+Threads::Mutex SPIMutex;
+Threads::Mutex PowerMutex;
+Threads::Mutex ErrMutex;
+Threads::Mutex ImuMutex;
+Threads::Mutex TransmitMutex;
+Threads::Mutex ReceiveMutex;
+Threads::Mutex RecPongMutex;
 
-// -------------------- functions ------------------------ //
-
-// CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection). Matches the
-// Pi driver's pit_protocol.crc16_ccitt so both ends agree on the checksum.
-uint16_t crc16_ccitt(const uint8_t *data, size_t len, uint16_t crc)
-{
-  for (size_t i = 0; i < len; i++)
-  {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint8_t b = 0; b < 8; b++)
-    {
-      crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
-    }
-  }
-  return crc;
-}
+// -------------------------- Telemetry ----------------------------- //
 
 void fillTxBuff()
 {
-  while (1)
+  while (true)
   {
     // Snapshot each source under its own lock, then commit to the packet under
     // TransmitMutex so UARTTx never copies a half-written frame.
@@ -135,48 +105,41 @@ void fillTxBuff()
     TransmitMutex.lock();
     memcpy(txPacketPing.RxReceiver, rc_local, sizeof(rc_local));
     memcpy(txPacketPing.IMU, imu_local, sizeof(imu_local));
-    txPacketPing.VoltAndCurr[0] = (uint16_t)(volt * 1000.0f); // bus voltage, mV
-    // INA226 getCurrent() is amps; pack as mA so sub-amp resolution survives the
+    txPacketPing.VoltAndCurr[0] = (uint16_t)(volt * 1000.0f);
+    // getCurrent() is amps; pack as mA so sub-amp resolution survives the
     // uint16 (0..65535 mA covers the 8 A shunt range). Clamp negatives to 0.
     txPacketPing.VoltAndCurr[1] = (uint16_t)(curr < 0.0f ? 0.0f : curr * 1000.0f);
-    txPacketPing.Encoder = getCurrentSpeed(); // vehicle speed, m/s
+    txPacketPing.Encoder = getCurrentSpeed();
     txPacketPing.Timestamp = (int32_t)micros();
     TransmitMutex.unlock();
 
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
 void UARTTx()
 {
   uint32_t lastTime = 0;
-  const uint32_t interval = 1000000 / 200; // 1 second / 200 Hz
+  const uint32_t interval = 1000000UL / cfg::UART::tx_freq;
+
   while (true)
   {
     if (micros() - lastTime >= interval)
     {
       TransmitMutex.lock();
-      //(where it needs to go, what needs to go there, size of what needs to go)
       memcpy(&txPacketPong, &txPacketPing, sizeof(txPacketPing));
       TransmitMutex.unlock();
-      // Checksum the exact bytes going on the wire: whole packet up to the
-      // trailing 2-byte Checksum field (magic included).
+      // Checksum the exact bytes going on the wire: the whole packet up to the
+      // trailing 2-byte Checksum field, magic included.
       txPacketPong.Checksum = crc16_ccitt((const uint8_t *)&txPacketPong, sizeof(TXPacket) - 2);
       Serial1.write((byte *)&txPacketPong, sizeof(txPacketPong));
       lastTime = micros();
     }
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
-// Map a normalized [-1,1] command to PWM microseconds, piecewise about neutral.
-uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi)
-{
-  n = constrain(n, -1.0f, 1.0f);
-  float pwm = (n >= 0.0f) ? (neu + n * ((float)hi - (float)neu))
-                          : (neu + n * ((float)neu - (float)lo));
-  return (uint16_t)constrain(pwm, (float)lo, (float)hi);
-}
+// --------------------------- Commands ----------------------------- //
 
 void fillRxData()
 {
@@ -184,6 +147,7 @@ void fillRxData()
   float servo = rxPacketPong.ServoAng;
   float motor = rxPacketPong.MotorSpeed;
   uint8_t state = rxPacketPong.SystemState;
+
   CmdMutex.lock();
   cmd_setpoint[0] = servo;
   cmd_setpoint[1] = motor;
@@ -191,102 +155,78 @@ void fillRxData()
   memcpy(led_cmd, rxPacketPong.LED, sizeof(led_cmd));
   system_state = state;
   CmdMutex.unlock();
+
   RecPongMutex.unlock();
 }
 
 void UARTRx()
 {
+  uint8_t window[4] = {0, 0, 0, 0};
+  uint32_t magicNumRx = 0;
+
   while (true)
   {
-    RecieveMutex.lock();
+    ReceiveMutex.lock();
     while (Serial1.available())
     {
-      // Serial.println("I am Here!");
-      for (uint i = 0; i < sizeof(window) / sizeof(window[0]) - 1; i++)
+      // Slide a 4-byte window over the stream until the magic word lands.
+      for (size_t i = 0; i < sizeof(window) - 1; i++)
       {
         window[i] = window[i + 1];
       }
       window[3] = Serial1.read();
 
-      memcpy(&magicNumRx, &window, sizeof(window));
-      if (magicNumRx == cfg::UART::rx_magic_num)
-      {
-        // Serial.println("BEEF DEAD");
-        Serial1.readBytes((byte *)&rxPacketPing, sizeof(rxPacketPing));
+      memcpy(&magicNumRx, window, sizeof(window));
+      if (magicNumRx != cfg::UART::rx_magic_num)
+        continue;
 
-        // CRC over the wire bytes: 4 magic bytes + body up to the trailing
-        // 2-byte Checksum field. magicLE is little-endian on the Teensy, so
-        // its bytes match the on-wire magic order.
-        uint32_t magicLE = cfg::UART::rx_magic_num;
-        uint16_t crc = crc16_ccitt((const uint8_t *)&magicLE, sizeof(magicLE));
-        crc = crc16_ccitt((const uint8_t *)&rxPacketPing, sizeof(RxPacket) - 2, crc);
+      Serial1.readBytes((byte *)&rxPacketPing, sizeof(rxPacketPing));
 
-        if (!cfg::UART::verify_rx_crc || crc == rxPacketPing.Checksum)
-        {
-          RecPongMutex.lock();
-          memcpy(&rxPacketPong, &rxPacketPing, sizeof(rxPacketPong));
-          RecPongMutex.unlock();
-          fillRxData();
-          lastRxTime = micros();
-        }
-      }
+      // CRC over the wire bytes: 4 magic bytes plus the body up to the trailing
+      // 2-byte Checksum field. magicLE is little-endian on the Teensy, so its
+      // bytes match the on-wire magic order.
+      uint32_t magicLE = cfg::UART::rx_magic_num;
+      uint16_t crc = crc16_ccitt((const uint8_t *)&magicLE, sizeof(magicLE));
+      crc = crc16_ccitt((const uint8_t *)&rxPacketPing, sizeof(RxPacket) - 2, crc);
+
+      if (cfg::UART::verify_rx_crc && crc != rxPacketPing.Checksum)
+        continue;
+
+      RecPongMutex.lock();
+      memcpy(&rxPacketPong, &rxPacketPing, sizeof(rxPacketPong));
+      RecPongMutex.unlock();
+      fillRxData();
+      lastRxTime = micros();
     }
-    RecieveMutex.unlock();
-    threads.delay(1);
+    ReceiveMutex.unlock();
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
-int8_t getDirection(uint8_t prev, uint8_t curr)
-{
-  static const uint8_t forwardSeq[6] = {1, 3, 2, 6, 4, 5};
-
-  for (int i = 0; i < 6; i++)
-  {
-    if (forwardSeq[i] == prev)
-    {
-      int next = forwardSeq[(i + 1) % 6];
-      int prevInSeq = forwardSeq[(i + 5) % 6];
-      if (curr == next)
-        return -1;
-      if (curr == prevInSeq)
-        return 1;
-    }
-  }
-  return 0; // invalid/glitch transition
-}
+// ------------------------- Hall encoder --------------------------- //
 
 void onHallChange()
 {
   uint32_t cTime = micros();
 
-  uint8_t a = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_a_pin);
-  uint8_t b = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_b_pin);
-  uint8_t c = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_c_pin);
-/*   Serial.print(">Hall_A:");
-  Serial.println(a);
-  Serial.print(">Hall_B:");
-  Serial.println(b);
-  Serial.print(">Hall_C:");
-  Serial.println(c);
-    
-  
-  Serial.print(">State:");
-  Serial.println(currentState); */
-  
-  currentState = (a << 2) | (b << 1) | c;
+  uint8_t a_pin = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_a_pin);
+  uint8_t b_pin = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_b_pin);
+  uint8_t c_pin = digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_c_pin);
 
-  if (currentState != lastState)
+  currentState = (a_pin << 2) | (b_pin << 1) | c_pin;
+
+  if (currentState == lastState)
+    return;
+
+  deltaTime = cTime - lastTransitionTime;
+  lastTransitionTime = cTime;
+
+  int8_t d = hallDirection(lastState, currentState);
+  if (d != 0)
   {
-    deltaTime = cTime - lastTransitionTime;
-    lastTransitionTime = cTime;
-
-    int8_t d = getDirection(lastState, currentState);
-    if (d != 0)
-    {
-      direction = d;
-    }
-    lastState = currentState;
+    direction = d;
   }
+  lastState = currentState;
 }
 
 void getRPM()
@@ -297,58 +237,46 @@ void getRPM()
   int8_t current_dir = direction;
   interrupts();
 
-  // No hall edge within the timeout -> wheel stopped. Without this, deltaTime
-  // holds its last value forever and the encoder reports a ghost speed.
+  // No hall edge within the timeout means the wheels stopped. Without this,
+  // deltaTime holds its last value forever and the encoder reports a ghost
+  // speed from a stale interval.
   if (dt == 0 || (micros() - lastT) > cfg::ES2845S_4900KV_MOTOR::stop_timeout_us)
   {
     lastRPM = 0;
     return;
   }
 
-  static uint32_t dt_buffer[5] = {0};
+  constexpr uint8_t N = cfg::ES2845S_4900KV_MOTOR::rpm_window;
+  static uint32_t dt_buffer[N] = {0};
   static uint8_t dt_idx = 0;
 
   dt_buffer[dt_idx] = dt;
-  dt_idx = (dt_idx + 1) % 5;
+  dt_idx = (dt_idx + 1) % N;
 
   uint32_t sum_dt = 0;
-  for (uint8_t i = 0; i < 5; i++)
+  for (uint8_t i = 0; i < N; i++)
   {
     sum_dt += dt_buffer[i];
   }
-
-  uint32_t avg_dt = sum_dt / 5;
+  uint32_t avg_dt = sum_dt / N;
 
   float transitionsPerSec = 1000000.0f / avg_dt;
-  float electricalRPM = (transitionsPerSec * 60.0f) / 6.0f;
-  float mechanicalRPM = electricalRPM / 2.0f;
+  float electricalRPM = (transitionsPerSec * 60.0f) / cfg::ES2845S_4900KV_MOTOR::hall_states_per_erev;
+  float mechanicalRPM = electricalRPM / cfg::ES2845S_4900KV_MOTOR::pole_pairs;
 
   float instantaneousRPM = mechanicalRPM * current_dir;
-  lastRPM = (lastRPM * 0.2f) + (instantaneousRPM * 0.8f);
+  constexpr float alpha = cfg::ES2845S_4900KV_MOTOR::rpm_filter_alpha;
+  lastRPM = (lastRPM * (1.0f - alpha)) + (instantaneousRPM * alpha);
 }
 
 float getCurrentSpeed()
 {
   getRPM();
-  float inp_rpm = lastRPM;
-  // Serial.println(inp_rpm);
-  float out_rpm = inp_rpm * cfg::CAR_SPECS::ratio_motor_to_transaxle * cfg::CAR_SPECS::ratio_transaxle_to_diff;
-  // Serial.println(out_rpm);
-  float speed = out_rpm * cfg::CAR_SPECS::wheel_circumference / 60;
-  return speed;
+  float out_rpm = lastRPM * cfg::CAR_SPECS::ratio_motor_to_transaxle * cfg::CAR_SPECS::ratio_transaxle_to_diff;
+  return out_rpm * cfg::CAR_SPECS::wheel_circumference / 60.0f;
 }
 
-void InnerControlLoop()
-{
-  while (true)
-  {
-    //Serial.println("Dir: " + String(direction) + "\t");
-    //Serial.println(getCurrentSpeed());
-    //Serial.print(">RPM:");
-    //Serial.println(lastRPM);
-    threads.delay(20);
-  }
-}
+// ----------------------- Sensor threads --------------------------- //
 
 void ReadCurrAndVolt()
 {
@@ -360,17 +288,17 @@ void ReadCurrAndVolt()
     ErrMutex.unlock();
   }
   I2CMutex.unlock();
-  ErrMutex.lock();
 
+  ErrMutex.lock();
   errorFlag = 0;
   ErrMutex.unlock();
 
   I2CMutex.lock();
-  INA.setAverage(2);
-  INA.setMaxCurrentShunt(8, 0.002); // to be calibrated
+  INA.setAverage(cfg::INA226_SENSOR::avg_set);
+  INA.setMaxCurrentShunt(cfg::INA226_SENSOR::max_curr_expected, cfg::INA226_SENSOR::shunt_resistance);
   I2CMutex.unlock();
 
-  while (1)
+  while (true)
   {
     I2CMutex.lock();
     PowerMutex.lock();
@@ -380,19 +308,17 @@ void ReadCurrAndVolt()
     PowerMutex.unlock();
     I2CMutex.unlock();
 
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
 void ReadIMUStates()
 {
-
   I2CMutex.lock();
   while (!lsmimu.begin())
   {
     ErrMutex.lock();
     errorFlag = 2;
-    Serial.println("Cannot Find LSM9DS1 IMU!! Retrying..");
     ErrMutex.unlock();
   }
   I2CMutex.unlock();
@@ -402,15 +328,15 @@ void ReadIMUStates()
   ErrMutex.unlock();
 
   I2CMutex.lock();
-  lsmimu.setupAccel(lsmimu.LSM9DS1_ACCELRANGE_8G, lsmimu.LSM9DS1_ACCELDATARATE_119HZ);
-  lsmimu.setupMag(lsmimu.LSM9DS1_MAGGAIN_8GAUSS);
-  lsmimu.setupGyro(lsmimu.LSM9DS1_GYROSCALE_500DPS);
+  lsmimu.setupAccel(cfg::LSM9DS1_IMU::accel_range, cfg::LSM9DS1_IMU::poll_rate);
+  lsmimu.setupMag(cfg::LSM9DS1_IMU::mag_gain);
+  lsmimu.setupGyro(cfg::LSM9DS1_IMU::gyro_scale);
   I2CMutex.unlock();
 
-  while (1)
+  while (true)
   {
     I2CMutex.lock();
-    lsmimu.getEvent(&a, &m, &g, &temp); // (accel, mag, gyro, temp)
+    lsmimu.getEvent(&a, &m, &g, &temp);
     I2CMutex.unlock();
 
     ImuMutex.lock();
@@ -425,7 +351,7 @@ void ReadIMUStates()
     imuVals[8] = m.magnetic.z;
     ImuMutex.unlock();
 
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
@@ -433,7 +359,7 @@ void RxReceive()
 {
   PPMReader ppm(cfg::FLYSKY_IA6B_RX::ppm_pin, cfg::FLYSKY_IA6B_RX::channel_count);
 
-  while (1)
+  while (true)
   {
     for (uint8_t i = 1; i <= cfg::FLYSKY_IA6B_RX::channel_count; i++)
     {
@@ -442,51 +368,50 @@ void RxReceive()
       channelVals[i - 1] = value;
       RxMutex.unlock();
     }
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
-float speedIntegral = 0.0f;
-float speedLastErr = 0.0f;
+// -------------------------- Actuation ----------------------------- //
 
-uint16_t speedPID(float target_mps, float measured_mps, float dt)
+static float speedIntegral = 0.0f;
+static float speedLastErr = 0.0f;
+
+// PI plus feedforward on wheel speed. The ESC has a wide deadband either side
+// of neutral, so a static feedforward term carries the output across it and the
+// gain schedule adds authority once the error is large.
+static uint16_t speedPID(float target_mps, float measured_mps, float dt)
 {
+  using namespace cfg::PID_CTRL;
+
   float err = target_mps - measured_mps;
   float ff_term = 0.0f;
 
-  float stiction_kick_rev = 100.0f;
-
   if (target_mps > cfg::ESC_10BL60_G2::cmd_deadband)
   {
-    ff_term = cfg::PID_CTRL::deadband_fwd_us + cfg::PID_CTRL::kv_ff_fwd * target_mps;
+    ff_term = deadband_fwd_us + kv_ff_fwd * target_mps;
   }
   else if (target_mps < -cfg::ESC_10BL60_G2::cmd_deadband)
   {
-    ff_term = -cfg::PID_CTRL::deadband_rev_us + cfg::PID_CTRL::kv_ff_rev * target_mps;
-    if (measured_mps > -.05f)
+    ff_term = -deadband_rev_us + kv_ff_rev * target_mps;
+    if (measured_mps > -stiction_speed_mps)
     {
-      ff_term -= stiction_kick_rev;
+      ff_term -= stiction_kick_rev_us;
     }
   }
 
-  float active_kp = cfg::PID_CTRL::kp;
-  if (fabs(err) > cfg::PID_CTRL::err_threshold)
-  {
-    active_kp = cfg::PID_CTRL::kp_boost;
-  }
-
+  float active_kp = (fabsf(err) > err_threshold) ? kp_boost : kp;
   float p_term = active_kp * err;
 
   float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
   static float filtered_deriv = 0.0f;
-  filtered_deriv = (cfg::PID_CTRL::kd_filter_alpha * raw_deriv) + ((1.0f - cfg::PID_CTRL::kd_filter_alpha) * filtered_deriv);
-  float d_term = cfg::PID_CTRL::kd * filtered_deriv;
+  filtered_deriv = (kd_filter_alpha * raw_deriv) + ((1.0f - kd_filter_alpha) * filtered_deriv);
+  float d_term = kd * filtered_deriv;
   speedLastErr = err;
 
-  // Conditionally integrate only if the predicted PWM is not already at the limit and the error is pushing it further out of bounds.
-  float current_i_term = cfg::PID_CTRL::ki * speedIntegral;
-  float predicted_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + current_i_term + d_term;
-
+  // Integrate only when the output is off its limit, or when the error pushes
+  // back toward the usable range.
+  float predicted_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
   bool hit_upper_limit = (predicted_pwm >= cfg::ESC_10BL60_G2::speed_pwm_max) && (err > 0);
   bool hit_lower_limit = (predicted_pwm <= cfg::ESC_10BL60_G2::speed_pwm_min) && (err < 0);
 
@@ -494,11 +419,27 @@ uint16_t speedPID(float target_mps, float measured_mps, float dt)
   {
     speedIntegral += err * dt;
   }
+  speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
 
-  speedIntegral = constrain(speedIntegral, -cfg::PID_CTRL::max_integral, cfg::PID_CTRL::max_integral);
-
-  float final_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + (cfg::PID_CTRL::ki * speedIntegral) + d_term;
+  float final_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
   return (uint16_t)constrain(final_pwm, (float)cfg::ESC_10BL60_G2::speed_pwm_min, (float)cfg::ESC_10BL60_G2::speed_pwm_max);
+}
+
+// Normalized [-1,1] throttle to a speed setpoint. Magnitudes past the deadband
+// span min_speed_mps..max_speed_mps so the first usable stick position already
+// clears the ESC deadband.
+static float throttleToTargetMps(float motor)
+{
+  using namespace cfg::PID_CTRL;
+  const float db = cfg::ESC_10BL60_G2::cmd_deadband;
+
+  if (motor > 0.0f)
+  {
+    float scale = (motor - db) / (1.0f - db);
+    return min_speed_mps + scale * (max_speed_mps - min_speed_mps);
+  }
+  float scale = (motor + db) / (-1.0f + db);
+  return -min_speed_mps - scale * (max_speed_mps - min_speed_mps);
 }
 
 void testPWM()
@@ -510,8 +451,9 @@ void testPWM()
   throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::speed_pwm_neutral);
 
   uint32_t lastUs = micros();
+  float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
 
-  while (1)
+  while (true)
   {
     uint32_t now = micros();
     float dt = (float)(now - lastUs) * 1e-6f;
@@ -522,40 +464,45 @@ void testPWM()
     memcpy(ch, channelVals, sizeof(ch));
     RxMutex.unlock();
 
-    // Is a live RC signal present on the sticks we read?
-    bool rc_signal = (ch[0] >= cfg::AUTO_DRIVE::rc_valid_min && ch[0] <= cfg::AUTO_DRIVE::rc_valid_max) &&
-                     (ch[2] >= cfg::AUTO_DRIVE::rc_valid_min && ch[2] <= cfg::AUTO_DRIVE::rc_valid_max);
+    const uint16_t steer_ch = ch[cfg::FLYSKY_IA6B_RX::ch_steer];
+    const uint16_t throt_ch = ch[cfg::FLYSKY_IA6B_RX::ch_throt];
+
+    // A receiver that is unplugged or out of range parks its channels outside
+    // the plausible pulse band; treat that as no RC rather than as a command.
+    bool rc_signal = (steer_ch >= cfg::AUTO_DRIVE::rc_valid_min && steer_ch <= cfg::AUTO_DRIVE::rc_valid_max) &&
+                     (throt_ch >= cfg::AUTO_DRIVE::rc_valid_min && throt_ch <= cfg::AUTO_DRIVE::rc_valid_max);
 
     float rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
     float rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
     bool rc_active = false;
-    bool pi_drive = false; // true only when the Pi command drives the throttle
+    bool pi_drive = false;
 
     if (rc_signal)
     {
-      // What the RC transmitter would command (the manual mapping).
-      rc_steer = ch[0];
+      rc_steer = steer_ch;
 
       if (cfg::ESC_10BL60_G2::speed_demon)
       {
-        drive_mode_sw = (ch[4] < 1500) ? true : false;
-        rc_throt = drive_mode_sw ? map(ch[2], 1000, 2000, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_min)
-                                 : map(ch[2], 1000, 2000, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
+        bool reverse = ch[cfg::FLYSKY_IA6B_RX::ch_drive_mode] < 1500;
+        rc_throt = reverse
+                       ? map(throt_ch, cfg::FLYSKY_IA6B_RX::pulse_min, cfg::FLYSKY_IA6B_RX::pulse_max,
+                             cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_min)
+                       : map(throt_ch, cfg::FLYSKY_IA6B_RX::pulse_min, cfg::FLYSKY_IA6B_RX::pulse_max,
+                             cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
       }
-      else
+      else if (throt_ch > cfg::ESC_10BL60_G2::rc_throt_fwd_break)
       {
-        // Throttle deadzone 1140 < 1500 < 1575
-        if (ch[2] > 1525)
-          rc_throt = map(ch[2], 1500, 2000, 1575, max_pwm_throt);
-        else if (ch[2] < 1475)
-          rc_throt = map(ch[2], 1000, 1500, max_pwm_rev, 1475);
-        else
-          rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
-        rc_throt = (rc_throt > max_pwm_throt) ? max_pwm_throt : rc_throt;
-        rc_throt = (rc_throt < max_pwm_rev) ? max_pwm_rev : rc_throt;
+        rc_throt = map(throt_ch, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::FLYSKY_IA6B_RX::pulse_max,
+                       cfg::ESC_10BL60_G2::rc_throt_fwd_floor, max_pwm_throt);
       }
+      else if (throt_ch < cfg::ESC_10BL60_G2::rc_throt_rev_break)
+      {
+        rc_throt = map(throt_ch, cfg::FLYSKY_IA6B_RX::pulse_min, cfg::ESC_10BL60_G2::speed_pwm_neutral,
+                       max_pwm_rev, cfg::ESC_10BL60_G2::rc_throt_rev_break);
+      }
+      rc_throt = constrain(rc_throt, (float)max_pwm_rev, (float)max_pwm_throt);
 
-      // Human is driving if either stick output leaves its neutral band.
+      // The human is driving if either stick output leaves its neutral band.
       rc_active =
           (fabsf(rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) > cfg::AUTO_DRIVE::throt_override_band) ||
           (fabsf(rc_steer - cfg::SERVO_D135F::angle_pwm_neutral) > cfg::AUTO_DRIVE::steer_override_band);
@@ -569,11 +516,9 @@ void testPWM()
     }
     else
     {
-      // Fallback to the Pi: sticks centered, or no receiver. Actuate a fresh
-      // command (normalized [-1,1] passthrough); neutral if the Pi is silent.
-      // The Pi sends the full [-1,1] range; the speed_pwm_*/angle_pwm_* bounds
-      // cap it. +1 -> max, 0 -> neutral, -1 -> min (verify polarity on hardware;
-      // flip pit.yaml steering_sign/speed_sign if a stick drives the wrong way).
+      // Sticks centered, or no receiver. A fresh Pi command drives; a stale one
+      // falls to neutral. Polarity is corrected Pi-side via pit.yaml
+      // steering_sign/speed_sign.
       bool fresh = (lastRxTime != 0) &&
                    ((micros() - lastRxTime) < (cfg::UART::rx_timeout * 1000UL));
 
@@ -586,7 +531,6 @@ void testPWM()
 
         cmd_pwm[0] = mapNormToPwm(servo, cfg::SERVO_D135F::angle_pwm_min,
                                   cfg::SERVO_D135F::angle_pwm_neutral, cfg::SERVO_D135F::angle_pwm_max);
-
         cmd_pwm[1] = motor;
         pi_drive = true;
       }
@@ -597,40 +541,20 @@ void testPWM()
       }
     }
 
-    // Steering actuates immediately. The Pi's throttle ramps toward the target
-    // (the ESC ignores a step from neutral). RC and the neutral failsafe apply
-    // directly, so a human override and the stale-command stop are both instant.
-    static float throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    // Steering actuates directly. Under the Pi the throttle runs closed loop on
+    // the encoder; RC and the stale-command failsafe write PWM straight through,
+    // so a human override and the neutral stop are both instant.
     float measured_mps = getCurrentSpeed();
     float target_mps = 0.0f;
 
-    if (pi_drive)
+    if (pi_drive && fabsf(cmd_pwm[1]) > cfg::ESC_10BL60_G2::cmd_deadband)
     {
-      float motor = cmd_pwm[1];
-
-      if (fabs(motor) <= cfg::ESC_10BL60_G2::cmd_deadband)
-      {
-        throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
-        speedIntegral = 0.0f;
-        speedLastErr = 0.0f;
-      }
-      else if (motor > 0.0f)
-      {
-        float scale = (motor - cfg::ESC_10BL60_G2::cmd_deadband) / (1.0f - cfg::ESC_10BL60_G2::cmd_deadband);
-        target_mps = cfg::PID_CTRL::min_speed_mps + scale * (cfg::PID_CTRL::max_speed_mps - cfg::PID_CTRL::min_speed_mps);
-        throt_out = speedPID(target_mps, measured_mps, dt);
-      }
-      else
-      {
-        float scale = (motor + cfg::ESC_10BL60_G2::cmd_deadband) / (-1.0f + cfg::ESC_10BL60_G2::cmd_deadband);
-        target_mps = -cfg::PID_CTRL::min_speed_mps + scale * (-cfg::PID_CTRL::max_speed_mps + cfg::PID_CTRL::min_speed_mps);
-        throt_out = speedPID(target_mps, measured_mps, dt);
-      }
+      target_mps = throttleToTargetMps(cmd_pwm[1]);
+      throt_out = speedPID(target_mps, measured_mps, dt);
     }
     else
     {
-      // Manual RC override fallback
-      throt_out = cmd_pwm[1];
+      throt_out = pi_drive ? cfg::ESC_10BL60_G2::speed_pwm_neutral : cmd_pwm[1];
       speedIntegral = 0.0f;
       speedLastErr = 0.0f;
     }
@@ -638,18 +562,21 @@ void testPWM()
     steerServo.writeMicroseconds(cmd_pwm[0]);
     throtMot.writeMicroseconds(throt_out);
 
-    Serial.print(">Target_MPS:");
-    Serial.println(target_mps);
+    if (cfg::DEBUG::serial_plot)
+    {
+      Serial.print(">Target_MPS:");
+      Serial.println(target_mps);
+      Serial.print(">Measured_MPS:");
+      Serial.println(measured_mps);
+      Serial.print(">Sent_PWM:");
+      Serial.println(throt_out);
+    }
 
-    Serial.print(">Measured_MPS:");
-    Serial.println(measured_mps);
-
-    Serial.print(">Sent_PWM:");
-    Serial.println(throt_out);
-
-    threads.delay(1);
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
+
+// --------------------------- Displays ----------------------------- //
 
 void DotMatrix()
 {
@@ -657,7 +584,7 @@ void DotMatrix()
   mx.begin();
   mx.setIntensity(cfg::MAX_7219_DOT_MATRIX::intensity);
   mx.displayClear();
-  // Intro splash on boot; scrolls once, then the loop switches to the glyph.
+  // Boot splash; scrolls once, then the loop switches to the glyph.
   mx.displayText("RACECAR NEO", PA_CENTER, 50, 1500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
   SPIMutex.unlock();
 
@@ -666,7 +593,7 @@ void DotMatrix()
   bool wasPi = false;
   int16_t lastMode = -1;
 
-  while (1)
+  while (true)
   {
     bool fresh = (lastRxTime != 0) &&
                  ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
@@ -678,34 +605,31 @@ void DotMatrix()
     state = system_state;
     CmdMutex.unlock();
 
-    bool pi_dm = fresh && (state & cfg::SYS_STATE::dotmatrix_active);
-
-    if (pi_dm)
+    if (fresh && (state & cfg::SYS_STATE::dotmatrix_active))
     {
-      // Render the Pi's 8x24 bitmap directly (row-major, 1 = LED on). The raw
-      // setPoint column axis runs opposite to the MD_Parola text engine, so
-      // reverse it to match the splash/glyph orientation (else text mirrors).
-      const uint16_t W = 8 * cfg::MAX_7219_DOT_MATRIX::num_matrix;
+      // Render the Pi's 8x24 bitmap directly. The raw setPoint column axis runs
+      // opposite to the MD_Parola text engine, so reverse it to match the
+      // splash/glyph orientation; otherwise text mirrors.
+      constexpr uint16_t W = cfg::MAX_7219_DOT_MATRIX::cols;
       SPIMutex.lock();
       gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
-      for (uint8_t r = 0; r < 8; r++)
+      for (uint8_t r = 0; r < cfg::MAX_7219_DOT_MATRIX::rows; r++)
         for (uint16_t c = 0; c < W; c++)
           gfx->setPoint(r, (W - 1) - c, bmp[r * W + c]);
       gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
       SPIMutex.unlock();
       wasPi = true;
       lastMode = -1; // force the glyph to redraw when the Pi releases the display
-      threads.delay(50);
+      threads.delay(cfg::TEENSY_THREADS::disp_tick_ms);
     }
     else if (!splashDone)
     {
-      // Play the boot splash scroll to completion.
       SPIMutex.lock();
       bool done = mx.displayAnimate();
       SPIMutex.unlock();
       if (done)
         splashDone = true;
-      threads.delay(20);
+      threads.delay(cfg::TEENSY_THREADS::splash_tick_ms);
     }
     else
     {
@@ -727,7 +651,7 @@ void DotMatrix()
       SPIMutex.lock();
       mx.displayAnimate();
       SPIMutex.unlock();
-      threads.delay(50);
+      threads.delay(cfg::TEENSY_THREADS::disp_tick_ms);
     }
   }
 }
@@ -746,23 +670,21 @@ void ledStuffs()
   bool fresh = (lastRxTime != 0) &&
                ((micros() - lastRxTime) < (cfg::DISP::cmd_timeout_ms * 1000UL));
 
-  // The rainbow "loading" sweep plays only while the Pi asserts driver_starting
-  // (held for ~led_load_ms right after the driver launches). Booting the Teensy
-  // into an already-running Pi leaves the flag clear -> straight to red idle.
+  // The rainbow sweep plays only while the Pi asserts driver_starting (held for
+  // ~led_load_ms right after the driver launches). Booting the Teensy into an
+  // already-running Pi leaves the flag clear, so it goes straight to red idle.
   static uint32_t load_start = 0;
   static bool was_starting = false;
   bool starting = fresh && (state & cfg::SYS_STATE::driver_starting);
   if (starting && !was_starting)
     load_start = millis();
   was_starting = starting;
-  bool loading = starting;
 
   for (int i = 0; i < N; i++)
     leds[i] = CRGB::Black;
 
-  if (loading)
+  if (starting)
   {
-    // Rainbow wipe that fills the strip over led_load_ms.
     uint32_t elapsed = millis() - load_start;
     int lit = map(elapsed, 0, cfg::DISP::led_load_ms, 0, N);
     for (int i = 0; i < lit && i < N; i++)
@@ -770,17 +692,16 @@ void ledStuffs()
   }
   else if (fresh && (state & cfg::SYS_STATE::led_active))
   {
-    // Pi is driving the strip: one RGB triplet per LED.
     for (int i = 0; i < N; i++)
       leds[i] = CRGB(local_led[i * 3], local_led[i * 3 + 1], local_led[i * 3 + 2]);
   }
   else
   {
-    // Idle default: single-color red voltage bar, filling from both ends.
+    // Idle default: red voltage bar filling from both ends.
     PowerMutex.lock();
     float volt = power[1];
     PowerMutex.unlock();
-    int half = map((int)(volt * 100), 750, 840, 0, N / 2);
+    int half = map((int)(volt * 100), cfg::DISP::volt_bar_min_cv, cfg::DISP::volt_bar_max_cv, 0, N / 2);
     half = constrain(half, 0, N / 2);
     for (int i = 0; i < half; i++)
     {
