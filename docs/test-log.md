@@ -4,6 +4,36 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-006 - 2026-09-06 (bench)
+
+### Setup
+Same car and transmitter as TL-005, with `ch_manual_override` moved to index 7.
+
+### Hypothesis
+CH8 reaches the Teensy over PPM, so swD drives the manual override.
+
+### Method
+Flip swD and watch the dot matrix and the drive path; exercise every v0.7.0
+feature.
+
+### Observations
+- CH8 arrives and swD drives the override. The six-channel figure for the iA6B
+  counts its servo rails; the PPM stream carries the whole frame, so all eight
+  slots populate. The TL-005 concern does not apply.
+- All v0.7.0 features working: charge bar, slow mode on swA, manual override on
+  swD, dot-matrix I/M under override.
+
+### Conclusion
+Supported. The prediction in TL-005 that CH7 and CH8 might be absent was wrong,
+and the "six channels over PPM" claim is corrected across `config.h`, the
+README, `docs/architecture.md`, and `docs/changelog.md`.
+
+Not separately measured: `slow_rc_scale` against an instrumented 1.0 m/s. Slow
+mode engages and caps the car, but the RC-path scalar is still the provisional
+0.4 rather than a calibrated value.
+
+---
+
 ## TL-005 - 2026-09-06 (bench)
 
 ### Setup
@@ -28,17 +58,6 @@ response.
 ### Conclusion
 The override mechanism works; only the channel binding was wrong.
 `ch_manual_override` moves from index 5 (CH6, swB) to index 7 (CH8, swD).
-
-Open: a stock iA6B carries six channels over PPM, so CH7 and CH8 may not arrive
-at all. If they do not, the override channel reads 0, resolves to down, and the
-override silently never engages. Next action: read `RxReceiver[6]` and
-`RxReceiver[7]` from telemetry with the transmitter on and confirm CH8 tracks
-swD across both positions before relying on the override. If CH8 is dead, either
-enable eight-channel output on the link or reassign swD onto CH6 in the
-transmitter's aux menu and set `ch_manual_override` back to 5.
-
-Still unverified from TL-004: stick polarity on CH2/CH4, and `slow_rc_scale`
-against a measured 1.0 m/s.
 
 ---
 

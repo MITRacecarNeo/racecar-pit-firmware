@@ -54,8 +54,9 @@ no 0.6.0 firmware release. See the versioning rules in the README.
   channels unchanged.
 - `cfg::FLYSKY_IA6B_RX` documents the real channel map: AETR order, index N-1
   for PPM channel N, aux on CH5/CH6. The old comment claimed SWA/SWB/SWC/SWD on
-  indices 4-7, carried over from a 10-channel i-BUS listing; the iA6B emits six
-  channels over PPM, so indices 6 and 7 are always 0.
+  indices 4-7, carried over from an i-BUS listing that ran past the array. The
+  iA6B has six servo rails, but its PPM stream carries the whole frame, so all
+  eight slots populate and swA-swD land on CH5-CH8.
 - Long explanatory comments trimmed across `config.h`, `helpers.cpp`,
   `packets.h`, `crc16.h`, `drive_map.h`, `helpers.h`, `main.cpp`, and the host
   tests; comments that only restate the code are gone.

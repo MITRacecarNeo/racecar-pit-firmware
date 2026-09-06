@@ -80,14 +80,15 @@ namespace cfg
     namespace FLYSKY_IA6B_RX
     {
         constexpr uint8_t ppm_pin = 5;
-        // PPM frame width. The iA6B emits 6 channels over PPM; slots 7 and 8
-        // stay 0 unless the transmitter is running the 10-channel firmware.
+        // PPM frame width. The iA6B has six servo rails, but its PPM stream
+        // carries the whole frame, so all eight slots populate; CH8 is
+        // confirmed live on hardware.
         constexpr uint8_t channel_count = 8;
 
         // Zero-based indices into channelVals[]. AETR order, so PPM channel N
         // is index N-1: 0 aileron (right stick X), 1 elevator (right stick Y),
-        // 2 throttle (left stick Y), 3 rudder (left stick X), 4-5 the two aux
-        // channels the transmitter assigns (SwA/SwB or VrA/VrB).
+        // 2 throttle (left stick Y), 3 rudder (left stick X), 4-7 the aux
+        // channels, which the FS-i6 assigns swA through swD.
         //
         // Drive reads the two self-centering axes: right stick Y for throttle,
         // left stick X for steering. The transmitter's own throttle axis (CH3,
@@ -98,16 +99,11 @@ namespace cfg
 
         // Two-position switches, shared with the driver: it reads the same
         // channels and threshold out of the telemetry RC array. The FS-i6 aux
-        // order puts swA-swD on CH5-CH8, confirmed on hardware for swA and swB.
+        // order puts swA-swD on CH5-CH8, confirmed on hardware.
         //   ch_speed_mode      down = fast (config cap), up = slow
         //   ch_manual_override down = Pi autonomy allowed, up = RC only
         // Both default to the permissive position when the channel is absent,
         // so losing the receiver never leaves the car slow or locked out.
-        //
-        // swD sits past the six channels the iA6B carries over PPM, so the
-        // transmitter and receiver have to be emitting eight for the override
-        // to arrive at all; a channel that never shows up reads as down and the
-        // override silently never engages. Verify against telemetry.
         constexpr uint8_t ch_speed_mode = 4;      // CH5, swA
         constexpr uint8_t ch_manual_override = 7; // CH8, swD
         constexpr uint16_t sw_threshold = 1500;   // us, at or above = switch up

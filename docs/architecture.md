@@ -129,10 +129,9 @@ permissive position.
 | swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `testPWM` |
 | swD | CH8 | 7 | Pi autonomy allowed | Teensy-only drive | `testPWM`, `DotMatrix` |
 
-CH5 and CH6 are confirmed on hardware as swA and swB. CH8 sits past the six
-channels a stock iA6B carries over PPM, so the override depends on the link
-being set up to emit eight; an absent channel reads down and the override never
-engages.
+Confirmed on hardware: CH5 is swA, CH6 is swB, and CH8 is swD and arrives
+intact. The iA6B has six servo rails, but the PPM stream carries the whole
+frame, so all eight slots populate.
 
 `testPWM` publishes both states to `DotMatrix` through the `manual_override` and
 `rc_driving` volatiles. Under override the display shows `M` while the sticks

@@ -179,9 +179,9 @@ Both drive axes now return to center on release.
 Which way is forward and which way is left is set on the transmitter (Functions
 > Reverse), not in firmware.
 
-A stock iA6B carries six channels over PPM, so CH7 and CH8 arrive only if the
-transmitter and receiver are both set up to emit eight. `PPMReader` reports 0
-for a channel that is absent, out of band, or stale past its 500 ms failsafe,
+The iA6B has six servo rails, but its PPM stream carries the whole frame, so
+all eight slots populate; CH8 is confirmed live on hardware. `PPMReader` reports
+0 for a channel that is absent, out of band, or stale past its 500 ms failsafe,
 and clamps everything else into 1000-2000 us; `rc_valid_min`/`rc_valid_max`
 (900/2100) therefore only reject the 0 case.
 
@@ -191,14 +191,9 @@ narrowing the array would change `TXPacket` and break the wire. See
 
 ### Switches
 
-The FS-i6 aux order puts swA through swD on CH5 through CH8. A pulse at or
-above `sw_threshold` (1500 us) is up; anything below, and any channel that is
-absent or outside the valid band, is down.
-
-swD lands past the six channels a stock iA6B carries over PPM, so the link has
-to be emitting eight channels for the override to arrive. A channel that never
-shows up reads as down, which means the override silently never engages;
-confirm CH8 moves in telemetry before relying on it.
+The FS-i6 aux order puts swA through swD on CH5 through CH8, all four of which
+arrive over PPM. A pulse at or above `sw_threshold` (1500 us) is up; anything
+below, and any channel that is absent or outside the valid band, is down.
 
 | Switch | Ch | Index | Down | Up |
 | ------ | -- | ----- | ---- | -- |
