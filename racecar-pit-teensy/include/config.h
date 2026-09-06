@@ -41,6 +41,7 @@ namespace cfg
     namespace ESC_10BL60_G2
     {
         constexpr uint8_t motor_pin = 3;
+        // Full RC throw instead of the percent_* trim; see main.cpp.
         constexpr bool speed_demon = false;
 
         // RC-manual throw as a fraction of the range, when speed_demon is off.
@@ -59,6 +60,11 @@ namespace cfg
         constexpr uint16_t rc_throt_fwd_floor = 1575; // first PWM past the ESC forward deadband
 
         constexpr float cmd_deadband = 0.01; // ignore joystick noise around zero
+
+        // Slow mode (swA up) trims the open-loop RC throw about neutral. The
+        // Pi path caps a speed setpoint instead; see PID_CTRL::slow_speed_mps.
+        // Provisional: set it on the bench against a measured 1.0 m/s.
+        constexpr float slow_rc_scale = 0.4f;
     }
 
     namespace SERVO_D135F
@@ -87,9 +93,19 @@ namespace cfg
         // left stick X for steering. The transmitter's own throttle axis (CH3,
         // left stick Y) is ratcheted and rests at its low endpoint, which the
         // RC override in testPWM would read as a held reverse command.
-        constexpr uint8_t ch_steer = 3;      // CH4 rudder, left stick X
-        constexpr uint8_t ch_throt = 1;      // CH2 elevator, right stick Y
-        constexpr uint8_t ch_drive_mode = 4; // CH5 aux, selects reverse under speed_demon
+        constexpr uint8_t ch_steer = 3; // CH4 rudder, left stick X
+        constexpr uint8_t ch_throt = 1; // CH2 elevator, right stick Y
+
+        // Two-position switches, shared with the driver: it reads the same
+        // channels and threshold out of the telemetry RC array. Assign swA to
+        // CH5 and swD to CH6 in the transmitter's aux menu.
+        //   ch_speed_mode      down = fast (config cap), up = slow
+        //   ch_manual_override down = Pi autonomy allowed, up = RC only
+        // Both default to the permissive position when the channel is absent,
+        // so losing the receiver never leaves the car slow or locked out.
+        constexpr uint8_t ch_speed_mode = 4;      // CH5, swA
+        constexpr uint8_t ch_manual_override = 5; // CH6, swD
+        constexpr uint16_t sw_threshold = 1500;   // us, at or above = switch up
 
         // PPMReader clamps valid pulses into this band and reports 0 for a
         // channel that is absent or stale past its 500 ms failsafe.
@@ -190,6 +206,7 @@ namespace cfg
         // on the hall encoder holds the setpoint.
         constexpr float max_speed_mps = 5.0f;  // top speed at full joystick
         constexpr float min_speed_mps = 0.75f; // crawl speed at minimum joystick
+        constexpr float slow_speed_mps = 1.0f; // setpoint cap in slow mode (swA up)
 
         constexpr float kp = 20.0f;
         constexpr float ki = 30.0f;
@@ -231,10 +248,24 @@ namespace cfg
                   "speed band must be ordered min < max");
     static_assert(FLYSKY_IA6B_RX::ch_steer < FLYSKY_IA6B_RX::channel_count &&
                       FLYSKY_IA6B_RX::ch_throt < FLYSKY_IA6B_RX::channel_count &&
-                      FLYSKY_IA6B_RX::ch_drive_mode < FLYSKY_IA6B_RX::channel_count,
+                      FLYSKY_IA6B_RX::ch_speed_mode < FLYSKY_IA6B_RX::channel_count &&
+                      FLYSKY_IA6B_RX::ch_manual_override < FLYSKY_IA6B_RX::channel_count,
                   "RC channel indices must fit channelVals[]");
-    static_assert(FLYSKY_IA6B_RX::ch_steer != FLYSKY_IA6B_RX::ch_throt,
-                  "steering and throttle must read different RC channels");
+    static_assert(FLYSKY_IA6B_RX::ch_steer != FLYSKY_IA6B_RX::ch_throt &&
+                      FLYSKY_IA6B_RX::ch_speed_mode != FLYSKY_IA6B_RX::ch_manual_override &&
+                      FLYSKY_IA6B_RX::ch_speed_mode != FLYSKY_IA6B_RX::ch_throt &&
+                      FLYSKY_IA6B_RX::ch_speed_mode != FLYSKY_IA6B_RX::ch_steer &&
+                      FLYSKY_IA6B_RX::ch_manual_override != FLYSKY_IA6B_RX::ch_throt &&
+                      FLYSKY_IA6B_RX::ch_manual_override != FLYSKY_IA6B_RX::ch_steer,
+                  "each RC function must read its own channel");
+    static_assert(FLYSKY_IA6B_RX::pulse_min < FLYSKY_IA6B_RX::sw_threshold &&
+                      FLYSKY_IA6B_RX::sw_threshold < FLYSKY_IA6B_RX::pulse_max,
+                  "switch threshold must sit inside the pulse range");
+    static_assert(PID_CTRL::slow_speed_mps >= PID_CTRL::min_speed_mps &&
+                      PID_CTRL::slow_speed_mps <= PID_CTRL::max_speed_mps,
+                  "slow-mode cap must sit inside the speed band");
+    static_assert(ESC_10BL60_G2::slow_rc_scale > 0.0f && ESC_10BL60_G2::slow_rc_scale <= 1.0f,
+                  "slow-mode RC scale must be in (0, 1]");
     static_assert(ES2845S_4900KV_MOTOR::rpm_filter_alpha > 0.0f &&
                       ES2845S_4900KV_MOTOR::rpm_filter_alpha <= 1.0f,
                   "RPM filter alpha must be in (0, 1]");

@@ -96,8 +96,8 @@ transmitter emits AETR order.
 | 1 | CH2 | Elevator, right stick vertical | sprung | `ch_throt`, ESC PWM |
 | 2 | CH3 | Throttle, left stick vertical | ratcheted | telemetry only |
 | 3 | CH4 | Rudder, left stick horizontal | sprung | `ch_steer`, steering PWM |
-| 4 | CH5 | Aux 1 (SwA or VrA) | switch | `ch_drive_mode`, reverse under `speed_demon` |
-| 5 | CH6 | Aux 2 (SwB or VrB) | switch | telemetry only |
+| 4 | CH5 | swA | switch | `ch_speed_mode`, fast/slow |
+| 5 | CH6 | swD | switch | `ch_manual_override`, Pi lockout |
 | 6 | CH7 | absent over PPM | - | reads 0 |
 | 7 | CH8 | absent over PPM | - | reads 0 |
 
@@ -116,6 +116,27 @@ All eight slots are republished raw over telemetry (`TXPacket.RxReceiver`), the
 two unfilled ones included, and the driver normalizes all eight in
 `pit_protocol.Telemetry.rc_normalized`. The array width is fixed by the wire
 format, so dropping the dead slots would be a protocol break.
+
+### Switch contract
+
+`rcSwitchUp()` in `drive_map.h` decides a switch: up at or above `sw_threshold`
+(1500 us), down otherwise, and down for any pulse outside the valid band. An
+absent channel reads 0, so a lost receiver resolves both switches to their
+permissive position.
+
+| Switch | Ch | Index | Down | Up | Resolved in |
+| ------ | -- | ----- | ---- | -- | ----------- |
+| swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `testPWM` |
+| swD | CH6 | 5 | Pi autonomy allowed | Teensy-only drive | `testPWM`, `DotMatrix` |
+
+`testPWM` publishes both states to `DotMatrix` through the `manual_override` and
+`rc_driving` volatiles. Under override the display shows `M` while the sticks
+are live and `I` otherwise, and the Pi's bitmap and mode bits are ignored.
+
+Slow mode clamps the closed-loop setpoint on the Pi path and trims the open-loop
+PWM throw by `slow_rc_scale` on the RC path; RC override detection runs before
+the trim. The driver reads the same two channels and threshold out of
+`/rc/channels`, so the switches need no wire change.
 
 ## Interfaces
 
@@ -149,6 +170,8 @@ runtime meaning on a microcontroller: all tunables are compile-time constants in
 - `Serial1` gets a 2048-byte RX buffer. The stock 64 bytes fills in about 0.7 ms
   at 921600 baud, shorter than the scheduler can preempt `UARTRx` for, and a
   474-byte command frame is lost mid-flight when it overflows.
+- swD up locks the Pi out of drive: centered sticks hold neutral rather than
+  handing control back to autonomy.
 - Pi commands are dropped after `rx_timeout` (50 ms) and the drive falls to
   neutral. The RC transmitter overrides the Pi whenever a stick leaves its
   neutral band and a plausible pulse is present, so a dead receiver holds

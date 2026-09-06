@@ -34,3 +34,13 @@ int8_t hallDirection(uint8_t prev, uint8_t curr)
   }
   return 0;
 }
+
+bool rcPulseValid(uint16_t pulse, uint16_t lo, uint16_t hi)
+{
+  return pulse >= lo && pulse <= hi;
+}
+
+bool rcSwitchUp(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold)
+{
+  return rcPulseValid(pulse, lo, hi) && pulse >= threshold;
+}

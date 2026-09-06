@@ -40,6 +40,10 @@ extern float cmd_pwm[2];      // {steer, throttle} resolved actuation, us
 extern uint16_t max_pwm_throt;
 extern uint16_t max_pwm_rev;
 
+// Switch state resolved in testPWM, read by DotMatrix.
+extern volatile bool manual_override; // swD up: Pi locked out of drive
+extern volatile bool rc_driving;      // sticks out of their neutral band
+
 // ----------------------- FlySky IA6B Rx --------------------------- //
 extern uint16_t channelVals[cfg::FLYSKY_IA6B_RX::channel_count];
 

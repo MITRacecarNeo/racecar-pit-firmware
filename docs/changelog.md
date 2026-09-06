@@ -12,11 +12,22 @@ Pairs with `racecar_neo_ros2_driver` v0.7.x. The wire format is unchanged from
 no 0.6.0 firmware release. See the versioning rules in the README.
 
 ### Added
+- Two RC switches, sharing one contract with the driver and needing no wire
+  change since both ride in the existing telemetry RC array. swA on CH5 selects
+  fast (`max_speed_mps`, 5.0 m/s) or slow (`slow_speed_mps`, 1.0 m/s); swD on
+  CH6 selects Pi autonomy or manual override, where the Teensy drives alone and
+  centered sticks hold neutral instead of handing back to the Pi. Both default
+  to the permissive position when the receiver is absent. Under override the dot
+  matrix shows `M` with live sticks and `I` otherwise, ignoring the Pi's bitmap
+  and mode bits; `A` is meaningless while autonomy is locked out.
+- `rcPulseValid` / `rcSwitchUp` in `drive_map.{h,cpp}`, host tested, so the
+  fail-safe switch default is covered rather than asserted.
 - `battery.{h,cpp}`: 2S LiPo state of charge from pack voltage, piecewise-linear
   over a ten-point discharge curve (3.50 to 4.20 V/cell), Arduino-free and host
   tested.
-- Host unit tests (`pio test -e native`, 14 cases) over the CRC, the
-  normalized-to-PWM mapping, the hall direction decode, and the SoC curve.
+- Host unit tests (`pio test -e native`, 17 cases) over the CRC, the
+  normalized-to-PWM mapping, the hall direction decode, the RC switch decode,
+  and the SoC curve.
 - Pytest suite for the Pi-side reference (`racecar-pit-pi/tests/`, 13 cases),
   including schema sizes checked against the firmware packet sizes.
 - `static_assert` on every wire struct size in `packets.h` and on the PWM,
@@ -72,6 +83,11 @@ no 0.6.0 firmware release. See the versioning rules in the README.
   frame.
 
 ### Removed
+- The `speed_demon` reverse-select branch in `testPWM`, which read CH5 to pick a
+  throttle direction. It mapped the whole pulse range onto neutral-to-max, so
+  after the move to the sprung CH2 a centered stick sat at roughly half
+  throttle. `speed_demon` now only widens the RC endpoints in `main.cpp` and the
+  normal piecewise path handles both directions, which frees CH5 for swA.
 - `src/claude.txt`, a superseded copy of the firmware describing a 230400-baud
   link and an RC arm switch that no longer exist.
 - Dead `InnerControlLoop` thread, unused `max_pwm_left`/`max_pwm_right`,

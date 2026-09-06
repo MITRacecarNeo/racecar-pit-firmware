@@ -8,6 +8,8 @@
 // host test stays free of the Arduino headers config.h pulls in.
 static const uint16_t STEER_LO = 1025, STEER_NEU = 1500, STEER_HI = 1975;
 static const uint16_t THROT_LO = 800, THROT_NEU = 1500, THROT_HI = 2200;
+// Mirrored from cfg::AUTO_DRIVE and cfg::FLYSKY_IA6B_RX.
+static const uint16_t RC_LO = 900, RC_HI = 2100, SW_THRESH = 1500;
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -98,6 +100,34 @@ static void test_hall_invalid_transitions_report_zero(void)
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(3, 3));
 }
 
+// --------------------------- RC switches -------------------------- //
+
+static void test_rc_pulse_validity_band(void)
+{
+    TEST_ASSERT_TRUE(rcPulseValid(1500, RC_LO, RC_HI));
+    TEST_ASSERT_TRUE(rcPulseValid(RC_LO, RC_LO, RC_HI));
+    TEST_ASSERT_TRUE(rcPulseValid(RC_HI, RC_LO, RC_HI));
+    TEST_ASSERT_FALSE(rcPulseValid(0, RC_LO, RC_HI));
+    TEST_ASSERT_FALSE(rcPulseValid(2500, RC_LO, RC_HI));
+}
+
+static void test_rc_switch_positions(void)
+{
+    TEST_ASSERT_TRUE(rcSwitchUp(2000, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_TRUE(rcSwitchUp(SW_THRESH, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(1499, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(1000, RC_LO, RC_HI, SW_THRESH));
+}
+
+// The safety property behind both switches: an absent channel reads 0, which
+// must resolve to down, so a lost receiver leaves fast mode and autonomy on
+// rather than latching the car slow or locking the Pi out.
+static void test_rc_switch_absent_channel_reads_down(void)
+{
+    TEST_ASSERT_FALSE(rcSwitchUp(0, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchUp(2500, RC_LO, RC_HI, SW_THRESH));
+}
+
 // --------------------------- battery SoC -------------------------- //
 
 static void test_soc_endpoints_and_clamping(void)
@@ -150,6 +180,9 @@ int main(int, char **)
     RUN_TEST(test_map_stays_inside_bounds_across_sweep);
     RUN_TEST(test_hall_sequence_directions);
     RUN_TEST(test_hall_invalid_transitions_report_zero);
+    RUN_TEST(test_rc_pulse_validity_band);
+    RUN_TEST(test_rc_switch_positions);
+    RUN_TEST(test_rc_switch_absent_channel_reads_down);
     RUN_TEST(test_soc_endpoints_and_clamping);
     RUN_TEST(test_soc_is_monotonic_across_the_band);
     RUN_TEST(test_soc_tracks_the_lipo_knee_not_the_voltage);

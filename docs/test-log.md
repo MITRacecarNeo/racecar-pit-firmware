@@ -11,8 +11,9 @@ Host only (no hardware attached). PlatformIO teensy platform, GCC 13 for the
 native environment. Python 3, pytest 9.0.2.
 
 ### Hypothesis
-The state-of-charge bar and the comment pass leave the firmware building and the
-logic tests green, and the SoC curve is monotonic across 7.0-8.4 V.
+The state-of-charge bar, the RC remap, and the switch scheme leave the firmware
+building and the logic tests green; the SoC curve is monotonic across
+7.0-8.4 V, and an absent switch channel resolves to its permissive position.
 
 ### Method
 `pio run`, `pio test -e native`, `python3 -m pytest tests -q` from
@@ -23,13 +24,15 @@ logic tests green, and the SoC curve is monotonic across 7.0-8.4 V.
 | ---- | ----- | ---- |
 | SoC curve span | 7000 to 8400 | mV |
 | Curve breakpoints | 10 | - |
-| Native test cases | 14 | - |
+| Native test cases | 17 | - |
 | Pytest cases | 13 | - |
 
 ### Observations
-- teensy41 build SUCCESS. Flash code 65748 -> 65876 B (+128), data 8676 B
+- teensy41 build SUCCESS. Flash code 65748 -> 66196 B (+448), data 8676 B
   unchanged, RAM1 variables 15104 B and RAM2 17568 B both unchanged.
-- native: 14/14 passed in 0.62 s.
+- Switch decode: pulses of 0 and 2500 us both read down, so a lost receiver
+  leaves fast mode and autonomy enabled.
+- native: 17/17 passed in 0.51 s.
 - pytest: 13/13 passed in 0.05 s.
 - SoC is monotonic over the whole band at 10 mV steps and clamps to 0 and 100
   outside it.
@@ -43,7 +46,9 @@ against a discharging pack, and the FS-iA6B channel map in
 a bench capture. Next action, before any wheels-down run: log CH1-CH8 over
 telemetry with the transmitter on, confirm CH2 and CH4 rest near 1500 us, and
 check that pushing the right stick forward drives forward and left stick left
-steers left. Reverse the affected channel on the transmitter if not.
+steers left. Reverse the affected channel on the transmitter if not. Then
+confirm swA and swD sit on CH5 and CH6 and that each switch's down position
+reads below 1500 us, and calibrate `slow_rc_scale` against a measured 1.0 m/s.
 
 ---
 

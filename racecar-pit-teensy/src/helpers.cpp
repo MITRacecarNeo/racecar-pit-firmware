@@ -41,6 +41,8 @@ float cmd_setpoint[2];
 float cmd_pwm[2];
 uint16_t max_pwm_throt;
 uint16_t max_pwm_rev;
+volatile bool manual_override = false;
+volatile bool rc_driving = false;
 
 // ----------------------- FlySky IA6B Rx --------------------------- //
 // AETR order, 1000-2000 us, 0 when a channel is absent or past failsafe:
@@ -371,6 +373,19 @@ void RxReceive()
 
 // -------------------------- Actuation ----------------------------- //
 
+static bool pulseValid(uint16_t pulse)
+{
+  return rcPulseValid(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max);
+}
+
+// Defaults to the permissive position when the channel is absent, so a lost
+// receiver never leaves the car slow or locked out.
+static bool switchUp(uint16_t pulse)
+{
+  return rcSwitchUp(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max,
+                    cfg::FLYSKY_IA6B_RX::sw_threshold);
+}
+
 static float speedIntegral = 0.0f;
 static float speedLastErr = 0.0f;
 
@@ -463,8 +478,10 @@ void testPWM()
 
     // An unplugged or out-of-range receiver reads outside the pulse band; that
     // is no RC, not a command.
-    bool rc_signal = (steer_ch >= cfg::AUTO_DRIVE::rc_valid_min && steer_ch <= cfg::AUTO_DRIVE::rc_valid_max) &&
-                     (throt_ch >= cfg::AUTO_DRIVE::rc_valid_min && throt_ch <= cfg::AUTO_DRIVE::rc_valid_max);
+    bool rc_signal = pulseValid(steer_ch) && pulseValid(throt_ch);
+
+    const bool slow_mode = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_speed_mode]);
+    const bool override_on = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_manual_override]);
 
     float rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
     float rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
@@ -475,16 +492,7 @@ void testPWM()
     {
       rc_steer = steer_ch;
 
-      if (cfg::ESC_10BL60_G2::speed_demon)
-      {
-        bool reverse = ch[cfg::FLYSKY_IA6B_RX::ch_drive_mode] < 1500;
-        rc_throt = reverse
-                       ? map(throt_ch, cfg::FLYSKY_IA6B_RX::pulse_min, cfg::FLYSKY_IA6B_RX::pulse_max,
-                             cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_min)
-                       : map(throt_ch, cfg::FLYSKY_IA6B_RX::pulse_min, cfg::FLYSKY_IA6B_RX::pulse_max,
-                             cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::ESC_10BL60_G2::speed_pwm_max);
-      }
-      else if (throt_ch > cfg::ESC_10BL60_G2::rc_throt_fwd_break)
+      if (throt_ch > cfg::ESC_10BL60_G2::rc_throt_fwd_break)
       {
         rc_throt = map(throt_ch, cfg::ESC_10BL60_G2::speed_pwm_neutral, cfg::FLYSKY_IA6B_RX::pulse_max,
                        cfg::ESC_10BL60_G2::rc_throt_fwd_floor, max_pwm_throt);
@@ -496,10 +504,21 @@ void testPWM()
       }
       rc_throt = constrain(rc_throt, (float)max_pwm_rev, (float)max_pwm_throt);
 
+      // Detect the override on the full throw, then trim: slow mode must not
+      // make it harder for a human to take the car back.
       rc_active =
           (fabsf(rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) > cfg::AUTO_DRIVE::throt_override_band) ||
           (fabsf(rc_steer - cfg::SERVO_D135F::angle_pwm_neutral) > cfg::AUTO_DRIVE::steer_override_band);
+
+      if (slow_mode)
+      {
+        rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral +
+                   (rc_throt - cfg::ESC_10BL60_G2::speed_pwm_neutral) * cfg::ESC_10BL60_G2::slow_rc_scale;
+      }
     }
+
+    manual_override = override_on;
+    rc_driving = rc_active;
 
     if (rc_active)
     {
@@ -509,8 +528,9 @@ void testPWM()
     else
     {
       // Sticks centered or no receiver: a fresh Pi command drives, a stale one
-      // falls to neutral.
-      bool fresh = (lastRxTime != 0) &&
+      // falls to neutral. swD up locks the Pi out entirely, so centered sticks
+      // stop the car rather than handing it back to autonomy.
+      bool fresh = !override_on && (lastRxTime != 0) &&
                    ((micros() - lastRxTime) < (cfg::UART::rx_timeout * 1000UL));
 
       if (fresh)
@@ -540,6 +560,10 @@ void testPWM()
     if (pi_drive && fabsf(cmd_pwm[1]) > cfg::ESC_10BL60_G2::cmd_deadband)
     {
       target_mps = throttleToTargetMps(cmd_pwm[1]);
+      if (slow_mode)
+      {
+        target_mps = constrain(target_mps, -cfg::PID_CTRL::slow_speed_mps, cfg::PID_CTRL::slow_speed_mps);
+      }
       throt_out = speedPID(target_mps, measured_mps, dt);
     }
     else
@@ -594,7 +618,14 @@ void DotMatrix()
     state = system_state;
     CmdMutex.unlock();
 
-    if (fresh && (state & cfg::SYS_STATE::dotmatrix_active))
+    // swD up: the Teensy owns the display too. M while the sticks are live,
+    // I otherwise; the Pi's auto glyph has no meaning while it is locked out.
+    const bool override_on = manual_override;
+    const uint8_t mode = override_on
+                             ? (rc_driving ? cfg::SYS_STATE::mode_manual : cfg::SYS_STATE::mode_idle)
+                             : (uint8_t)(state & cfg::SYS_STATE::mode_mask);
+
+    if (!override_on && fresh && (state & cfg::SYS_STATE::dotmatrix_active))
     {
       // The raw setPoint column axis runs opposite to the MD_Parola text
       // engine, so reverse it or the Pi's text renders mirrored.
@@ -622,7 +653,6 @@ void DotMatrix()
     else
     {
       // Idle default: the drive-mode glyph.
-      uint8_t mode = state & cfg::SYS_STATE::mode_mask;
       if (wasPi || (int16_t)mode != lastMode)
       {
         const char *glyph = (mode == cfg::SYS_STATE::mode_manual) ? "M"
