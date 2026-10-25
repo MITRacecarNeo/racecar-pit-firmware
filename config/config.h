@@ -1,20 +1,18 @@
 #pragma once
-#include <Arduino.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_LSM9DS1.h>
+#include <stddef.h>
+#include <stdint.h>
 
-#include "battery.h"
+#include "packets.h"
 
 // All tunables live here. Nothing in src/ should hardcode a value that belongs
-// in this file.
+// in this file. Arduino-free, so host tests read the same values; the Pi reads
+// them back through the info reply (docs/protocol.md).
 namespace cfg
 {
 
     namespace UART
     {
         constexpr uint32_t baud_rate = 921600;
-        constexpr uint32_t tx_magic_num = 0xDEADBEEF;
-        constexpr uint32_t rx_magic_num = 0xBEEFDEAD;
         constexpr uint16_t tx_freq = 200;    // Hz, telemetry rate
         constexpr uint32_t rx_timeout = 50;  // ms, command staleness -> neutral
         constexpr bool verify_rx_crc = true; // drop command frames failing CRC-16
@@ -22,6 +20,12 @@ namespace cfg
         // command at 921600 baud fills it in ~0.7 ms, less than UARTRx can be
         // preempted for.
         constexpr size_t rx_buffer_bytes = 2048;
+        // Holds one telemetry frame plus one info chunk, so a slot never
+        // blocks the transmit thread.
+        constexpr size_t tx_buffer_bytes = 512;
+        // A command body takes 5.1 ms on the wire; a read stuck longer than
+        // this is a broken frame.
+        constexpr uint32_t rx_read_timeout_ms = 20;
     }
 
     namespace DEBUG
@@ -29,6 +33,11 @@ namespace cfg
         constexpr uint32_t usb_baud = 115200;
         // Teleplot trace on USB serial; runs inside the 1 kHz actuation loop.
         constexpr bool serial_plot = false;
+    }
+
+    namespace I2C
+    {
+        constexpr uint32_t clock_hz = 100000; // Wire default; INA226 and LSM9DS1 share the bus
     }
 
     namespace RGB_LED_WS2812B
@@ -41,7 +50,7 @@ namespace cfg
     namespace ESC_10BL60_G2
     {
         constexpr uint8_t motor_pin = 3;
-        // Full RC throw instead of the percent_* trim; see main.cpp.
+        // Full RC throw instead of the percent_* trim.
         constexpr bool speed_demon = false;
 
         // RC-manual throw as a fraction of the range, when speed_demon is off.
@@ -53,6 +62,14 @@ namespace cfg
         constexpr uint16_t speed_pwm_min = 800;      // us, full-reverse bound; deeper than 1000 to clear the ESC reverse deadband
         constexpr uint16_t speed_pwm_neutral = 1500; // us, ESC arm / neutral
         constexpr uint16_t speed_pwm_max = 2200;     // us, full-forward bound
+
+        // RC-manual PWM endpoints on the direct (fast-mode) path.
+        constexpr uint16_t rc_pwm_max = speed_demon
+                                            ? speed_pwm_max
+                                            : (uint16_t)(speed_pwm_neutral + (speed_pwm_max - speed_pwm_neutral) * percent_throt);
+        constexpr uint16_t rc_pwm_min = speed_demon
+                                            ? speed_pwm_min
+                                            : (uint16_t)(speed_pwm_neutral - (speed_pwm_neutral - speed_pwm_min) * percent_rev);
 
         // RC throttle stick deadzone, us.
         constexpr uint16_t rc_throt_fwd_break = 1525;
@@ -76,25 +93,22 @@ namespace cfg
     {
         constexpr uint8_t ppm_pin = 5;
         // PPM frame width. The iA6B has six servo rails, but its PPM stream
-        // carries the whole frame, so all eight slots populate; CH8 is
-        // confirmed live on hardware.
-        constexpr uint8_t channel_count = 8;
+        // carries the whole frame, so all eight slots populate.
+        constexpr uint8_t channel_count = wire::rc_channels;
 
         // Zero-based indices into channelVals[]. AETR order, so PPM channel N
         // is index N-1: 0 aileron (right stick X), 1 elevator (right stick Y),
         // 2 throttle (left stick Y), 3 rudder (left stick X), 4-7 the aux
         // channels, which the FS-i6 assigns swA through swD.
         //
-        // Drive reads the two self-centering axes: right stick Y for throttle,
-        // left stick X for steering. The transmitter's own throttle axis (CH3,
-        // left stick Y) is ratcheted and rests at its low endpoint, which the
-        // RC override in testPWM would read as a held reverse command.
+        // Drive reads the two self-centering axes. The transmitter's own
+        // throttle axis (CH3) is ratcheted and rests at its low endpoint, which
+        // the RC override would read as a held reverse command.
         constexpr uint8_t ch_steer = 3; // CH4 rudder, left stick X
         constexpr uint8_t ch_throt = 1; // CH2 elevator, right stick Y
 
         // Two-position switches, shared with the driver: it reads the same
-        // channels and threshold out of the telemetry RC array. The FS-i6 aux
-        // order puts swA-swD on CH5-CH8, confirmed on hardware.
+        // channels and threshold out of the telemetry RC array.
         //   ch_speed_mode      down = fast (config cap), up = slow
         //   ch_manual_override down = Pi autonomy allowed, up = RC only
         // Both default to the permissive position when the channel is absent,
@@ -112,17 +126,18 @@ namespace cfg
     namespace INA226_SENSOR
     {
         constexpr uint8_t i2c_addy = 0x40;
-        constexpr uint8_t avg_set = 2;
+        constexpr uint8_t avg_set = 2; // INA226 library enum index: 2 = 16 samples
         constexpr float max_curr_expected = 8.0;  // Amps
         constexpr float shunt_resistance = 0.002; // Ohms
     }
 
     namespace LSM9DS1_IMU
     {
-        constexpr Adafruit_LSM9DS1::lsm9ds1AccelRange_t accel_range = Adafruit_LSM9DS1::lsm9ds1AccelRange_t::LSM9DS1_ACCELRANGE_8G;
-        constexpr Adafruit_LSM9DS1::lsm9ds1AccelDataRate_t poll_rate = Adafruit_LSM9DS1::lsm9ds1AccelDataRate_t::LSM9DS1_ACCELDATARATE_119HZ;
-        constexpr Adafruit_LSM9DS1::lsm9ds1MagGain_t mag_gain = Adafruit_LSM9DS1::lsm9ds1MagGain_t::LSM9DS1_MAGGAIN_8GAUSS;
-        constexpr Adafruit_LSM9DS1::lsm9ds1GyroScale_t gyro_scale = Adafruit_LSM9DS1::lsm9ds1GyroScale_t::LSM9DS1_GYROSCALE_500DPS;
+        // Physical settings; sensors.cpp maps them onto the Adafruit enums.
+        constexpr uint8_t accel_range_g = 8;      // 2, 4, 8, 16
+        constexpr uint16_t accel_rate_hz = 119;   // 10, 50, 119, 238, 476, 952
+        constexpr uint8_t mag_range_gauss = 8;    // 4, 8, 12, 16
+        constexpr uint16_t gyro_range_dps = 500;  // 245, 500, 2000
     }
 
     namespace MAX_7219_DOT_MATRIX
@@ -139,11 +154,11 @@ namespace cfg
         constexpr uint8_t hall_a_pin = 30;
         constexpr uint8_t hall_b_pin = 31;
         constexpr uint8_t hall_c_pin = 32;
-        constexpr uint8_t mot_temp_pin = A17;       // wired, not sampled yet
+        constexpr uint8_t mot_temp_pin = 41;        // A17; wired, not sampled
         constexpr uint32_t stop_timeout_us = 30000; // no hall edge in this window -> RPM 0
         constexpr uint8_t pole_pairs = 2;
         constexpr uint8_t hall_states_per_erev = 6;
-        constexpr uint8_t rpm_window = 5;    // hall intervals averaged
+        constexpr uint8_t rpm_window = 5;       // hall intervals averaged
         constexpr float rpm_filter_alpha = 0.8; // weight on the new sample
     }
 
@@ -177,6 +192,7 @@ namespace cfg
         constexpr uint8_t dotmatrix_active = 0x04; // Pi is commanding the dot matrix
         constexpr uint8_t led_active = 0x08;       // Pi is commanding the LED strip
         constexpr uint8_t driver_starting = 0x10;  // Pi driver just launched: play the LED loading sweep
+        constexpr uint8_t info_request = 0x20;     // send info chunks until the Pi clears it
     }
 
     namespace TEENSY_THREADS
@@ -190,8 +206,9 @@ namespace cfg
 
     namespace CAR_SPECS
     {
+        constexpr float pi = 3.14159265f;
         constexpr float wheel_diameter = 0.072;                    // m
-        constexpr float wheel_circumference = wheel_diameter * PI; // m
+        constexpr float wheel_circumference = wheel_diameter * pi; // m
         constexpr float ratio_motor_to_transaxle = 18.0 / 61.0;
         constexpr float ratio_transaxle_to_diff = 15.0 / 37.0;
     }
@@ -199,9 +216,10 @@ namespace cfg
     namespace PID_CTRL
     {
         // The normalized [-1,1] Pi throttle maps onto this band; a PI controller
-        // on the hall encoder holds the setpoint.
-        constexpr float max_speed_mps = 5.0f;  // top speed at full joystick
-        constexpr float min_speed_mps = 0.75f; // crawl speed at minimum joystick
+        // on the hall encoder holds the setpoint. Indoor build: 1.0 m/s ceiling.
+        // The field build raises max_speed_mps to 4.0.
+        constexpr float max_speed_mps = 1.0f; // top speed at full joystick
+        constexpr float min_speed_mps = 0.5f; // crawl speed at minimum joystick
         // Slow mode (swA up) rescales full stick onto this, on both the Pi and
         // the RC path; RC closes the loop in slow mode so the cap is real.
         constexpr float slow_speed_mps = 1.0f;
@@ -233,6 +251,9 @@ namespace cfg
     static_assert(ESC_10BL60_G2::speed_pwm_min < ESC_10BL60_G2::speed_pwm_neutral &&
                       ESC_10BL60_G2::speed_pwm_neutral < ESC_10BL60_G2::speed_pwm_max,
                   "ESC PWM bounds must be ordered min < neutral < max");
+    static_assert(ESC_10BL60_G2::speed_pwm_min <= ESC_10BL60_G2::rc_pwm_min &&
+                      ESC_10BL60_G2::rc_pwm_max <= ESC_10BL60_G2::speed_pwm_max,
+                  "RC endpoints must sit inside the ESC bounds");
     static_assert(SERVO_D135F::angle_pwm_min < SERVO_D135F::angle_pwm_neutral &&
                       SERVO_D135F::angle_pwm_neutral < SERVO_D135F::angle_pwm_max,
                   "servo PWM bounds must be ordered min < neutral < max");
@@ -262,9 +283,27 @@ namespace cfg
     static_assert(PID_CTRL::slow_speed_mps >= PID_CTRL::min_speed_mps &&
                       PID_CTRL::slow_speed_mps <= PID_CTRL::max_speed_mps,
                   "slow-mode cap must sit inside the speed band");
-
     static_assert(ES2845S_4900KV_MOTOR::rpm_filter_alpha > 0.0f &&
                       ES2845S_4900KV_MOTOR::rpm_filter_alpha <= 1.0f,
                   "RPM filter alpha must be in (0, 1]");
+    static_assert(RGB_LED_WS2812B::num_leds * 3 <= wire::led_bytes,
+                  "LED strip must fit the command LED field");
+    static_assert(MAX_7219_DOT_MATRIX::rows * MAX_7219_DOT_MATRIX::cols == wire::dot_matrix_bytes,
+                  "dot matrix must match the command bitmap");
+    static_assert(UART::tx_buffer_bytes >= sizeof(TXPacket) + info_packet_max_bytes,
+                  "transmit buffer must hold one telemetry frame and one info chunk");
+    static_assert(LSM9DS1_IMU::accel_range_g == 2 || LSM9DS1_IMU::accel_range_g == 4 ||
+                      LSM9DS1_IMU::accel_range_g == 8 || LSM9DS1_IMU::accel_range_g == 16,
+                  "unsupported LSM9DS1 accel range");
+    static_assert(LSM9DS1_IMU::accel_rate_hz == 10 || LSM9DS1_IMU::accel_rate_hz == 50 ||
+                      LSM9DS1_IMU::accel_rate_hz == 119 || LSM9DS1_IMU::accel_rate_hz == 238 ||
+                      LSM9DS1_IMU::accel_rate_hz == 476 || LSM9DS1_IMU::accel_rate_hz == 952,
+                  "unsupported LSM9DS1 accel rate");
+    static_assert(LSM9DS1_IMU::mag_range_gauss == 4 || LSM9DS1_IMU::mag_range_gauss == 8 ||
+                      LSM9DS1_IMU::mag_range_gauss == 12 || LSM9DS1_IMU::mag_range_gauss == 16,
+                  "unsupported LSM9DS1 mag range");
+    static_assert(LSM9DS1_IMU::gyro_range_dps == 245 || LSM9DS1_IMU::gyro_range_dps == 500 ||
+                      LSM9DS1_IMU::gyro_range_dps == 2000,
+                  "unsupported LSM9DS1 gyro range");
 
 }

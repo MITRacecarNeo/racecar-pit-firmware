@@ -4,6 +4,102 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-009 - 2026-10-25
+
+### Setup
+Reference car, wheels on the ground and parked, teleop service running
+(driver v0.9.0, `pit_node`). Teensy on the Pi's USB for flashing; dot matrix
+disconnected by that wiring. Firmware: `main` (`e330426` source, indoor speed
+band) before, `release/v0.9.0` staged tree after. FlySky transmitter off.
+Battery 7.42 to 7.47 V.
+
+### Hypothesis
+The new firmware keeps every telemetry topic and value as before and raises
+the telemetry rate toward 200 Hz.
+
+### Method
+Flash with `pio run -t upload` (`teensy-cli`) while teleop runs. Before and
+after, a best-effort rclpy probe subscribes for 15 s to `/imu/lsm9ds1/raw`,
+`/mag/raw`, `/encoder/speed`, `/battery/voltage`, `/rc/channels`, `/rc/link`,
+`/battery/state` and records message rates and the gaps between Teensy-clock
+stamps on `/imu/lsm9ds1/raw`. `journalctl -u racecar-teleop` for link errors.
+
+### Parameters
+| Name | Before | After | Unit |
+| ---- | ------ | ----- | ---- |
+| Telemetry topics rate | 141.6 | 151.4 | Hz |
+| Teensy-stamped rate | 143.1 | 151.3 | Hz |
+| Stamp gap median | 5.81 | 6.27 | ms |
+| Stamp gap p95 | 10.83 | 10.09 | ms |
+| Stamp gap p99 | 10.93 | 11.54 | ms |
+| Stamp gap max | 11.04 | 15.18 | ms |
+| `/battery/state` | 1.0 | 1.0 | Hz |
+
+### Observations
+- Every topic publishes after the flash. Accel (-0.69, -0.03, +9.92 m/s^2),
+  gyro, mag (about -87, +169, -156 uT raw) and battery voltage match the
+  before values within noise. RC link false and all channels -1.0 in both
+  runs (transmitter off).
+- `pit_node` logged one Teensy clock restart and one odometry gap at the
+  flash; no CRC, serial, or reconnect messages.
+- The first upload stalled: the HalfKay bootloader's hidraw device was
+  root-only until `00-teensy.rules` was installed, and the write that started
+  during `udevadm trigger` failed. The retry flashed in 12.9 s.
+
+### Conclusion
+Existing telemetry unchanged. Rate +7%, not 200 Hz: the median gap of
+6.27 ms shows `UARTTx` waking about every 6.3 ms, so the running deadline
+falls behind and resyncs. Not yet checked: the info reply, Pi and RC drive
+paths, slow mode, manual override, LED strip.
+
+---
+
+## TL-008 - 2026-10-25
+
+### Setup
+Host only, on the car's Pi 5 (no flash). PlatformIO 6.2.0, platform teensy
+6.0.0, GCC 13 native. Python 3.12.3, pytest 7.4.4.
+
+### Hypothesis
+The subsystem split and the info reply leave the firmware building and the
+existing logic tests green, and the info payload fits its buffer and one
+telemetry slot.
+
+### Method
+`pio run`, `pio test -e native`, `pytest`, `ruff`, `black --check`, `mypy`
+from the repository root. Baseline: `pio run` and the two test suites on
+`main` (`e330426`) with the libraries the caret ranges resolved on
+2026-10-25.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Info payload | 1514 | B |
+| Info chunks | 12 | - |
+| Info cycle | 60 | ms |
+| Telemetry + largest chunk | 240 | B |
+| Native test cases | 40 | - |
+| Pytest cases | 29 | - |
+
+### Observations
+- teensy41 build SUCCESS. Flash code 86060 -> 90224 B, data 13108 -> 14132 B,
+  RAM1 variables 18912 -> 21952 B (2048 B payload, 512 B transmit buffer).
+  RAM2 unchanged at 12448 B.
+- The baseline build of `main` is 86060 B of code, against 66388 B in TL-007
+  for the same source: the unpinned libraries resolved to newer versions.
+- Baseline tests: native 21/21, pytest 13/13.
+- native: 40/40 passed. pytest: 29/29 passed. ruff, black, mypy clean.
+- The commit string is in the binary (`strings firmware.elf`).
+
+### Conclusion
+Supported on the host. Not run on hardware. Next action: flash the car, run
+`python3 scripts/pit_uart.py --info` with teleop stopped and compare every key
+against `config/config.h`, then repeat TL-002 (drive both directions through
+the ROS mux, wheels up) and measure the telemetry rate on
+`/imu/lsm9ds1/raw`.
+
+---
+
 ## TL-007 - 2026-09-06
 
 ### Setup

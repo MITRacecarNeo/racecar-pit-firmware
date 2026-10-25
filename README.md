@@ -1,15 +1,14 @@
 # racecar-pit-firmware
 
-Teensy 4.1 firmware for the NEO-PIT drive PCB on the RACECAR Neo V2, plus the
-Pi-side UART reference. The board replaces the Pololu Maestro and absorbs the
-servo, ESC, LSM9DS1 IMU, INA226 power sensor, hall encoder, MAX7219 dot matrix,
+Teensy 4.1 firmware for the NEO-PIT drive PCB on the RACECAR Neo V2. The board
+replaces the Pololu Maestro and absorbs the servo, ESC, LSM9DS1 IMU, INA226 power sensor, hall encoder, MAX7219 dot matrix,
 WS2812B strips, and FlySky iA6B RC receiver. The Pi speaks a binary UART
 protocol to the Teensy and sends normalized drive commands; the Teensy maps them
 to servo and ESC PWM and streams telemetry back.
 
 Pairs with [racecar_neo_ros2_driver](https://github.com/MITRacecarNeo/racecar_neo_ros2_driver),
 which owns the Pi side (`pit_node`, `pit_protocol.py`). The two share the wire
-format in `packets.h` and the version numbers that select a matching pair; see
+format in `src/packets.h` and the version numbers that select a matching pair; see
 [Versioning](#versioning).
 
 ## Table of contents
@@ -18,6 +17,7 @@ format in `packets.h` and the version numbers that select a matching pair; see
 - [Repository layout](#repository-layout)
 - [Branches](#branches)
 - [Wire protocol](#wire-protocol)
+- [Firmware info](#firmware-info)
 - [Drive control](#drive-control)
 - [Telemetry](#telemetry)
 - [RC receiver](#rc-receiver)
@@ -48,38 +48,47 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
-| 0.7.0 - 0.7.3 | 0.7.1 | unchanged |
+| 0.9.x | 0.9.0 | sizes unchanged; adds the info reply |
+| 0.7.4 - 0.9.0 | 0.7.1 | unchanged |
 | 0.6.0 | none tagged; run 0.5.0 | unchanged |
 | 0.5.0 - 0.5.1 | 0.5.0 | `TXPacket` 94 B, `RxPacket` 470 B + 4 B magic |
 | 0.4.0 | 0.4.0 | pre-mA current packing |
 | 0.3.0 - 0.3.2 | 0.3.0 | pre-mA current packing |
 
-The firmware skips from `0.5.0` to `0.7.0` to re-align with the driver. There
-is no `0.6.0` firmware tag and there will not be one.
+The firmware skips from `0.5.0` to `0.7.0` and from `0.7.1` to `0.9.0` to
+re-align with the driver. There are no `0.6.0` or `0.8.0` firmware tags.
 
 ## Repository layout
 
 ```
-racecar-pit-teensy/     PlatformIO project for the Teensy 4.1
-  include/
-    config.h            all tunables (UART, ESC, servo, encoder, RC, PID, drive model)
-    packets.h           wire format (authority for both sides)
-    Mutexes.h           per-resource locks for the TeensyThreads scheduler
-    crc16.h             CRC-16/CCITT-FALSE, Arduino-free
-    drive_map.h         normalized-to-PWM mapping and hall decode, Arduino-free
-    helpers.h           thread and shared-state declarations
-  src/
-    main.cpp            boot: peripherals, interrupts, thread launch
-    helpers.cpp         threads: telemetry, command RX, sensors, actuation, displays
-    crc16.cpp
-    drive_map.cpp
-  test/test_logic/      host unit tests
-  platformio.ini        teensy41 firmware env, native test env
-racecar-pit-pi/
-  PiUART.py             standalone Pi-side link reference (no ROS)
-  tests/                pytest suite for the schemas and CRC
-docs/                   architecture, changelog, test log
+platformio.ini          firmware env (teensy41) and host test env (native)
+config/
+  config.h              all tunables (UART, ESC, servo, encoder, RC, PID, IMU)
+src/                    Teensy firmware
+  main.cpp              boot: peripherals, interrupts, thread launch
+  shared.{h,cpp}        state shared between threads, one mutex per resource
+  link.{h,cpp}          UART threads: telemetry, info chunks, commands
+  drive.{h,cpp}         actuation thread, speed loop, hall encoder
+  sensors.{h,cpp}       INA226, LSM9DS1, FlySky PPM threads
+  displays.{h,cpp}      dot matrix thread, LED strip
+  packets.{h,cpp}       wire format, info chunk builder
+  info.{h,cpp}          info payload
+  version.h             firmware version
+  crc16, drive_map, battery   Arduino-free logic
+tests/
+  test_logic/, test_info/     host unit tests (pio test -e native)
+  scripts/              pytest suite for scripts/pit_uart.py
+scripts/
+  build_flags.py        git commit flags for the firmware build
+  pit_uart.py           bench tool: drive the link from the Pi without ROS
+data/                   hardware captures for the test log
+docs/                   protocol, architecture, changelog, test log
+pyproject.toml          pytest, ruff, black, mypy settings for scripts/
 ```
+
+The Arduino-free files in `src/` and `config/config.h` also build on the host,
+so the tests read the shipped values. The Pi side of the link lives in
+`racecar_neo_ros2_driver`; `scripts/pit_uart.py` is only for bench bring-up.
 
 ## Branches
 
@@ -92,14 +101,16 @@ docs/                   architecture, changelog, test log
 ## Wire protocol
 
 UART over the Pi GPIO14/15 header to the Teensy `Serial1`, 921600 baud,
-little-endian packed structs (`packets.h`). CRC-16/CCITT-FALSE covers every byte
-before the trailing 2-byte checksum, matching the driver's
-`pit_protocol.crc16_ccitt` (check value `0x29B1`).
+little-endian packed structs (`src/packets.h`). CRC-16/CCITT-FALSE
+covers every byte before the trailing 2-byte checksum, matching the driver's
+`pit_protocol.crc16_ccitt` (check value `0x29B1`). Full layout:
+[docs/protocol.md](docs/protocol.md).
 
 | Direction | Struct | Magic | Size | Rate |
 |---|---|---|---|---|
 | Teensy to Pi (telemetry) | `TXPacket` | `0xDEADBEEF` | 94 B | 200 Hz (`cfg::UART::tx_freq`) |
 | Pi to Teensy (command) | `RxPacket` | `0xBEEFDEAD` | 470 B + 4 B magic | 60 Hz, driver-side |
+| Teensy to Pi (info chunk) | `HeaderPacket` + chunk | `0xFEEDC0DE` | 18 to 146 B | on request |
 
 Both struct sizes are pinned by `static_assert`; changing one is a protocol
 break that has to land on both sides together. Telemetry carries a microsecond
@@ -107,6 +118,31 @@ timestamp, INA226 bus voltage and current, the FlySky RC channels, the LSM9DS1
 IMU (9 axes), the encoder, and a reserved EKF slot. Commands carry the
 normalized servo angle and motor speed, the dot-matrix and LED buffers, and a
 system-state byte. `verify_rx_crc` (default true) drops corrupt command frames.
+
+## Firmware info
+
+The Pi can ask the Teensy what it is running: the firmware version and
+commit, and the compiled configuration. That covers PWM bounds, the speed
+range and slow-mode cap, PID gains, drivetrain and encoder constants, the RC
+channel map, IMU ranges and units, power sensor settings, and sensor status.
+The driver asks once when it starts and stores the answer with the car's
+settings.
+
+The Pi sets bit `0x20` of `SystemState`. While it is set, the Teensy sends one
+info chunk after each telemetry frame, so telemetry keeps its rate. The
+payload is ASCII `key=value` lines (about 1.5 kB in 12 chunks, 60 ms per
+cycle). Keys and the reassembly rules are in
+[docs/protocol.md](docs/protocol.md#info-reply).
+
+On the bench, with the teleop service stopped:
+
+```sh
+python3 scripts/pit_uart.py --info                       # print the reply
+python3 scripts/pit_uart.py --info --yaml firmware.yaml  # also write YAML
+```
+
+Firmware older than 0.9.0 does not answer; the script exits with an error
+after 2 s.
 
 ## Drive control
 
@@ -121,8 +157,8 @@ Actuation follows an RC-priority, Pi-fallback model with no arm switch:
   is open loop: a normalized `[-1, 1]` angle maps piecewise across
   `angle_pwm_min`/`angle_pwm_neutral`/`angle_pwm_max`.
 - The Pi throttle is closed loop, as is the RC throttle in slow mode. The
-  normalized magnitude maps onto `min_speed_mps`..`max_speed_mps` (0.75 to
-  5.0 m/s), or onto `slow_speed_mps` in slow mode, and a PI controller with
+  normalized magnitude maps onto `min_speed_mps`..`max_speed_mps` (0.5 to
+  1.0 m/s in the indoor build, 4.0 m/s ceiling in the field build), or onto `slow_speed_mps` in slow mode, and a PI controller with
   feedforward holds that setpoint against the hall encoder, clamped to
   `speed_pwm_min`..`speed_pwm_max`. A command inside `cmd_deadband` writes
   neutral and resets the integrator.
@@ -142,14 +178,15 @@ Polarity is corrected on the Pi side (`pit.yaml` `speed_sign` /
 
 ## Telemetry
 
-`fillTxBuff` packs the LSM9DS1 (9 axes via `getEvent(accel, mag, gyro)`), INA226
-bus voltage (mV) and current (mA), the eight FlySky RC channels (raw pulse
-widths, us), and a microsecond timestamp. Current is packed as mA rather than
-truncated amps so sub-amp resolution survives the `uint16`. The encoder field
-carries signed ground speed in m/s, not RPM: `getRPM` averages the last five
-hall intervals and zeroes on a hall-transition timeout (`stop_timeout_us`,
-30 ms) instead of reporting a ghost speed from a stale interval, and
-`getCurrentSpeed` applies the two gear ratios and the wheel circumference.
+`UARTTx` assembles each frame at send time from the latest LSM9DS1 sample
+(`getEvent(accel, mag, gyro)`: m/s^2, rad/s, uT), the INA226 bus voltage (mV)
+and current (mA), the eight FlySky RC channels (raw pulse widths, us), and a
+microsecond timestamp. Current is packed as mA rather than truncated amps so
+sub-amp resolution survives the `uint16`. The encoder field carries signed
+ground speed in m/s, not RPM, as computed by the actuation thread: it averages
+the last five hall intervals, zeroes on a hall-transition timeout
+(`stop_timeout_us`, 30 ms) instead of reporting a ghost speed from a stale
+interval, and applies the two gear ratios and the wheel circumference.
 
 The `int32` timestamp is `micros()` and wraps every ~35.8 minutes; treat it as a
 wrapping counter.
@@ -198,7 +235,7 @@ below, and any channel that is absent or outside the valid band, is down.
 
 | Switch | Ch | Index | Down | Up |
 | ------ | -- | ----- | ---- | -- |
-| swA | CH5 | 4 | fast: speed capped by `max_speed_mps` (5.0 m/s) | slow: capped at `slow_speed_mps` (1.0 m/s) |
+| swA | CH5 | 4 | fast: speed capped by `max_speed_mps` (1.0 m/s indoor, 4.0 m/s field) | slow: capped at `slow_speed_mps` (1.0 m/s) |
 | swD | CH8 | 7 | Pi autonomy commands accepted | manual override, Teensy drives alone |
 
 Both default to the left column when the receiver is absent, so losing the link
@@ -206,7 +243,7 @@ never leaves the car stuck slow or the Pi locked out. The decode is
 `rcSwitchUp()` in `drive_map.h`, host tested.
 
 Slow mode rescales the full stick travel onto `slow_speed_mps` on both paths,
-so full throttle is a 1.0 m/s setpoint exactly rather than a clipped 5.0 m/s
+so full throttle is a 1.0 m/s setpoint exactly rather than a clipped `max_speed_mps`
 command. It rescales rather than clips, which keeps stick resolution usable
 instead of pinning most of the travel at the cap.
 
@@ -248,7 +285,7 @@ returns 0-100% and the bar length follows it.
 
 ## Build and flash
 
-PlatformIO with the Teensy platform. From `racecar-pit-teensy/`:
+PlatformIO with the Teensy platform. From the repository root:
 
 ```sh
 pio run              # build
@@ -256,7 +293,10 @@ pio run -t upload    # flash over USB (Teensy on /dev/ttyACM0)
 ```
 
 If `pio` is not on PATH it lives in the PlatformIO virtualenv, usually
-`~/.platformio/penv/bin/pio`.
+`~/.platformio/penv/bin/pio`. The platform and every library are pinned in
+`platformio.ini`, so one commit always builds the same firmware. The build
+embeds the short commit and a dirty flag (`scripts/build_flags.py`); the info
+reply reports both.
 
 `/dev/ttyACM0` is the USB debug and flash port only. The drive link is the GPIO
 UART (Teensy `Serial1` to the Pi's `/dev/neo-pit-pcb`, a udev symlink to
@@ -269,34 +309,44 @@ actuation loop.
 
 ## Tests
 
-Host unit tests over the Arduino-free logic (CRC, PWM mapping, hall decode),
-from `racecar-pit-teensy/`:
+Host unit tests over the Arduino-free logic, from the repository root:
 
 ```sh
 pio test -e native
 ```
 
-Fourteen cases over the CRC, the PWM mapping, the hall decode, and the 2S
-state-of-charge curve.
+40 cases in two suites: `test_logic` (CRC, PWM mapping, RC stick map, hall
+decode, switches, speed setpoints, state-of-charge curve) and `test_info`
+(payload format and content, chunking, the reference packet).
 
-Pi-side schema and CRC tests, from `racecar-pit-pi/`:
+Bench tool tests and checks, from the repository root:
 
 ```sh
 pytest
+ruff check scripts tests/scripts && black --check scripts tests/scripts && mypy
 ```
 
-Hardware runs are recorded in `docs/test-log.md`. The most recent on-robot
-session (2026-07-06, wheels up) streamed `/imu/lsm9ds1` at 151 Hz with no CRC or
-resync errors and drove the car through the ROS mux in both directions.
+Hardware runs are recorded in `docs/test-log.md`.
 
 ## Architecture
 
 See `docs/architecture.md` for the thread and mutex map, the data pipeline, and
-the pin assignments.
+the pin assignments, and `docs/protocol.md` for the wire format.
 
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [0.9.0] - Unreleased
+Pairs with driver v0.9.x; telemetry and command sizes unchanged.
+- Added: firmware info reply (version, commit, compiled configuration, sensor
+  status) on request through `SystemState` bit `0x20`; `docs/protocol.md`;
+  `scripts/pit_uart.py` bench tool with `--info` and `--yaml`.
+- Changed: repository layout (`src/`, `config/`, `tests/`, `scripts/`);
+  firmware split by subsystem; platform and libraries pinned; telemetry
+  141.6 -> 151.4 Hz.
+- Fixed: two threads fed the speed filter; a missing sensor held the I2C bus.
+- Removed: the `fillTxBuff` thread, unused mutexes, `BasicLinearAlgebra`.
 
 ### [0.7.1] - 2026-09-06
 - Changed: slow mode is an exact 1.0 m/s setpoint on both paths. RC slow mode

@@ -4,8 +4,8 @@
 
 Two ends of one serial link. A Teensy 4.1 on the NEO-PIT drive PCB owns every
 actuator and sensor on the RACECAR Neo V2; a Raspberry Pi 5 sends normalized
-drive commands and consumes telemetry. The Teensy runs eight cooperative threads
-under TeensyThreads plus the Arduino `loop()`; there is no RTOS and no dynamic
+drive commands and consumes telemetry. The Teensy runs seven threads under
+TeensyThreads plus the Arduino `loop()`; there is no RTOS and no dynamic
 allocation after boot.
 
 ```
@@ -23,66 +23,80 @@ allocation after boot.
 
 ## Components
 
-| Module (path)                            | Responsibility                                              | Depends on                |
-| ---------------------------------------- | ----------------------------------------------------------- | ------------------------- |
-| `racecar-pit-teensy/include/config.h`     | Every tunable; compile-time invariant checks                 | Arduino, Adafruit_LSM9DS1 |
-| `racecar-pit-teensy/include/packets.h`    | Wire format; header init; packet size static_asserts         | `config.h`                |
-| `racecar-pit-teensy/include/Mutexes.h`    | Lock declarations, one per shared resource                   | TeensyThreads             |
-| `racecar-pit-teensy/include/crc16.h`      | CRC-16/CCITT-FALSE, Arduino-free                             | none                      |
-| `racecar-pit-teensy/include/drive_map.h`  | Normalized-to-PWM mapping, hall direction decode; Arduino-free| none                      |
-| `racecar-pit-teensy/include/battery.h`    | 2S LiPo voltage-to-charge curve; Arduino-free                | none                      |
-| `racecar-pit-teensy/src/main.cpp`         | Boot: peripherals, interrupts, thread launch                 | `helpers.h`               |
-| `racecar-pit-teensy/src/helpers.cpp`      | Threads: telemetry, command RX, sensors, actuation, displays | all of the above          |
-| `racecar-pit-pi/PiUART.py`                | Standalone Pi-side link reference; no ROS                    | numpy, pyserial           |
+| Module (path) | Responsibility | Depends on |
+| ------------- | -------------- | ---------- |
+| `config/config.h` | Every tunable; compile-time invariant checks; Arduino-free | `packets.h` |
+| `src/packets.{h,cpp}` | Wire format, size static_asserts, info chunk builder | `crc16` |
+| `src/info.{h,cpp}` | Info payload from the compiled config; Arduino-free | `config.h`, `battery.h`, `version.h` |
+| `src/version.h` | Firmware version; commit macros set by `scripts/build_flags.py` | none |
+| `src/crc16.{h,cpp}` | CRC-16/CCITT-FALSE; Arduino-free | none |
+| `src/drive_map.{h,cpp}` | Normalized-to-PWM map, RC stick map, hall decode, switch decode, speed setpoint; Arduino-free | none |
+| `src/battery.{h,cpp}` | 2S LiPo voltage-to-charge curve; Arduino-free | none |
+| `src/shared.{h,cpp}` | State shared between threads and its mutexes | TeensyThreads |
+| `src/link.{h,cpp}` | `UARTTx`, `UARTRx`: telemetry, info chunks, commands | `packets`, `info`, `shared` |
+| `src/drive.{h,cpp}` | `DriveControl`, speed PID, hall ISR and speed estimate | `drive_map`, `shared`, Servo |
+| `src/sensors.{h,cpp}` | `ReadCurrAndVolt`, `ReadIMUStates`, `RxReceive` | INA226, Adafruit LSM9DS1, PPM-reader |
+| `src/displays.{h,cpp}` | `DotMatrix` thread, `updateLedStrip` | MD_Parola, FastLED, `battery` |
+| `src/main.cpp` | Boot: peripherals, interrupts, thread launch | all threads |
+| `scripts/pit_uart.py` | Bench tool: drives the link from the Pi without ROS | numpy, pyserial |
 
 ## Threads
 
 Started in `setup()`; each loops forever and yields with `threads.delay()`.
 
-| Thread            | Period | Reads                              | Writes                    |
-| ----------------- | ------ | ---------------------------------- | ------------------------- |
-| `testPWM`         | 1 ms   | `channelVals`, `cmd_setpoint`, hall| servo + ESC PWM           |
-| `RxReceive`       | 1 ms   | PPM pin                            | `channelVals`             |
-| `ReadCurrAndVolt` | 1 ms   | INA226 (I2C)                       | `power`                   |
-| `ReadIMUStates`   | 1 ms   | LSM9DS1 (I2C)                      | `imuVals`                 |
-| `fillTxBuff`      | 1 ms   | `channelVals`, `imuVals`, `power`  | `txPacketPing`            |
-| `UARTTx`          | 5 ms   | `txPacketPing`                     | `Serial1`                 |
-| `UARTRx`          | 1 ms   | `Serial1`                          | `cmd_setpoint`, displays  |
-| `DotMatrix`       | 50 ms  | `dotmatrix_cmd`, `system_state`    | MAX7219 (SPI)             |
-| `loop()`          | 25 ms  | `led_cmd`, `system_state`, `power` | WS2812B strip             |
+| Thread | Period | Reads | Writes |
+| ------ | ------ | ----- | ------ |
+| `DriveControl` | 1 ms | `channelVals`, `cmd_setpoint`, hall ISR state | servo + ESC PWM, `measured_speed_mps`, `manual_override`, `rc_driving` |
+| `RxReceive` | 1 ms | PPM pin | `channelVals` |
+| `ReadCurrAndVolt` | 1 ms | INA226 (I2C) | `power_amps`, `power_volts`, `power_ok` |
+| `ReadIMUStates` | 1 ms | LSM9DS1 (I2C) | `imuVals`, `imu_ok` |
+| `UARTTx` | 5 ms slot | `channelVals`, `imuVals`, power, `measured_speed_mps`, `system_state` | `Serial1` |
+| `UARTRx` | 1 ms | `Serial1` | `cmd_setpoint`, display buffers, `system_state`, `lastRxTime` |
+| `DotMatrix` | 50 ms | `dotmatrix_cmd`, `system_state`, `manual_override` | MAX7219 (SPI) |
+| `loop()` | 25 ms | `led_cmd`, `system_state`, power | WS2812B strip |
 
-Shared state is guarded per resource, never by one global lock: `CmdMutex`
-(command setpoints and display buffers), `RxMutex` (`channelVals`), `ImuMutex`,
-`PowerMutex`, `TransmitMutex` (`txPacketPing`), `ReceiveMutex`/`RecPongMutex`
-(the RX ping/pong pair), `I2CMutex` and `SPIMutex` (buses), `ErrMutex`
-(`errorFlag`). The hall ISR state is read under `noInterrupts()` rather than a
-mutex, since an ISR cannot block on one.
+Each shared block has one writer. Blocks wider than one word take their own
+mutex, never one global lock: `CmdMutex` (Pi command and display buffers),
+`RxMutex` (`channelVals`), `ImuMutex`, `PowerMutex`, and `I2CMutex` for the
+bus both sensors share. Single words (`lastRxTime`, the sensor and drive
+flags, `measured_speed_mps`) are `volatile`. The hall ISR state is read under
+`noInterrupts()`, since an ISR cannot block on a mutex.
+
+A sensor that does not answer `begin()` is retried every 100 ms with the bus
+released, so the other sensor keeps running; its `status.*` info key reads
+`missing` until then.
 
 ## Data pipeline
 
 Telemetry, Teensy to Pi:
 
 ```
-LSM9DS1 --I2C--> ReadIMUStates -> imuVals[9] --+
-INA226  --I2C--> ReadCurrAndVolt -> power[3] --+--> fillTxBuff -> txPacketPing
-iA6B    --PPM--> RxReceive -> channelVals[8] --+         |
-hall    --IRQ--> onHallChange -> getRPM -------+         v
-                                            UARTTx (200 Hz, CRC-16) --> Serial1
+LSM9DS1 --I2C--> ReadIMUStates  -> imuVals[9] ------+
+INA226  --I2C--> ReadCurrAndVolt -> power ----------+
+iA6B    --PPM--> RxReceive -> channelVals[8] -------+--> UARTTx (200 Hz, CRC-16) --> Serial1
+hall    --IRQ--> DriveControl -> measured_speed_mps +        |
+                                                             +--> info chunk while requested
 ```
 
 Command, Pi to Teensy:
 
 ```
-Serial1 -> UARTRx (magic sync, CRC-16 gate) -> rxPacketPong -> fillRxData
-             -> cmd_setpoint[2] -> testPWM -> speedPID -> ESC PWM
-             -> dotmatrix_cmd / led_cmd / system_state -> DotMatrix, ledStuffs
+Serial1 -> UARTRx (magic sync, CRC-16 gate) -> cmd_setpoint[2] -> DriveControl -> speedPID -> ESC PWM
+                                            -> dotmatrix_cmd / led_cmd / system_state -> DotMatrix, updateLedStrip
+                                            -> system_state info_request -> UARTTx
 ```
 
-`getRPM` averages the last five hall intervals, converts electrical to
-mechanical RPM, then low-pass filters at `rpm_filter_alpha`. `getCurrentSpeed`
-applies the two gear ratios and the wheel circumference to reach m/s at the
-ground, which is what the encoder field carries and what the speed loop closes
-on.
+The speed estimate averages the last five hall intervals, converts electrical
+to mechanical RPM, then low-pass filters at `rpm_filter_alpha`. It applies the
+two gear ratios and the wheel circumference to reach m/s at the ground, which
+is what the encoder field carries and what the speed loop closes on. Only
+`DriveControl` updates it.
+
+`UARTTx` keeps a running deadline; after a stall longer than one slot it
+restarts from the current time. The rate reaches `tx_freq` only while the
+thread wakes within one slot; measured 151 Hz on the car (TL-009). `Serial1` gets a
+512-byte transmit buffer, enough for one telemetry frame and one info chunk,
+so a slot never blocks the thread.
 
 ## RC receiver mapping
 
@@ -103,7 +117,7 @@ transmitter emits AETR order.
 
 Drive reads only sprung axes, so both controls return to center on release. CH3
 is the transmitter's own throttle axis and is ratcheted; the RC override in
-`testPWM` treats any output past `throt_override_band` as a human at the
+`DriveControl` treats any output past `throt_override_band` as a human at the
 controls, so a stick resting at its low endpoint would hold the car in reverse
 and lock out the Pi. Stick polarity is set on the transmitter, not in firmware.
 
@@ -126,14 +140,14 @@ permissive position.
 
 | Switch | Ch | Index | Down | Up | Resolved in |
 | ------ | -- | ----- | ---- | -- | ----------- |
-| swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `testPWM` |
-| swD | CH8 | 7 | Pi autonomy allowed | Teensy-only drive | `testPWM`, `DotMatrix` |
+| swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `DriveControl` |
+| swD | CH8 | 7 | Pi autonomy allowed | Teensy-only drive | `DriveControl`, `DotMatrix` |
 
 Confirmed on hardware: CH5 is swA, CH6 is swB, and CH8 is swD and arrives
 intact. The iA6B has six servo rails, but the PPM stream carries the whole
 frame, so all eight slots populate.
 
-`testPWM` publishes both states to `DotMatrix` through the `manual_override` and
+`DriveControl` publishes both states to `DotMatrix` through the `manual_override` and
 `rc_driving` volatiles. Under override the display shows `M` while the sticks
 are live and `I` otherwise, and the Pi's bitmap and mode bits are ignored.
 
@@ -150,7 +164,7 @@ the Teensy, and reading the switches out of `/rc/channels` is optional.
 
 | Interface | Pins / device                     | Defined in                     |
 | --------- | --------------------------------- | ------------------------------ |
-| Pi UART   | `Serial1`, 921600 8N1             | `cfg::UART`                    |
+| Pi UART   | `Serial1`, 921600 8N1; see `docs/protocol.md` | `cfg::UART`, `packets.h` |
 | USB debug | `Serial`, 115200, `/dev/ttyACM0`  | `cfg::DEBUG`                   |
 | Servo PWM | pin 2                             | `cfg::SERVO_D135F`             |
 | ESC PWM   | pin 3                             | `cfg::ESC_10BL60_G2`           |
@@ -158,23 +172,16 @@ the Teensy, and reading the switches out of `/rc/channels` is optional.
 | WS2812B   | pin 9                             | `cfg::RGB_LED_WS2812B`         |
 | MAX7219   | SPI, CS pin 10                    | `cfg::MAX_7219_DOT_MATRIX`     |
 | Hall      | pins 30, 31, 32 (IRQ on CHANGE)   | `cfg::ES2845S_4900KV_MOTOR`    |
-| I2C       | INA226 at 0x40, LSM9DS1           | `cfg::INA226_SENSOR`, `cfg::LSM9DS1_IMU` |
+| I2C       | INA226 at 0x40, LSM9DS1, 100 kHz  | `cfg::I2C`, `cfg::INA226_SENSOR`, `cfg::LSM9DS1_IMU` |
 
-The wire format in `packets.h` is shared with `racecar_neo_ros2_driver`
+The wire format in `src/packets.h` is shared with `racecar_neo_ros2_driver`
 (`pit_protocol.py`). Struct sizes are pinned by `static_assert`; changing one is
 a protocol break that has to land on both sides together.
-
-## Layout note
-
-The Teensy project follows the PlatformIO layout (`include/`, `src/`, `lib/`,
-`test/`) rather than the generic `src/ config/ tests/` scaffold. `config/` has no
-runtime meaning on a microcontroller: all tunables are compile-time constants in
-`include/config.h`.
 
 ## Constraints
 
 - Actuation runs at 1 kHz; anything that blocks longer than a few milliseconds
-  inside `testPWM` shows up as jitter at the ESC.
+  inside `DriveControl` shows up as jitter at the ESC.
 - `Serial1` gets a 2048-byte RX buffer. The stock 64 bytes fills in about 0.7 ms
   at 921600 baud, shorter than the scheduler can preempt `UARTRx` for, and a
   474-byte command frame is lost mid-flight when it overflows.

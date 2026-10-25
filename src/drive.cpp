@@ -1,0 +1,298 @@
+#include "drive.h"
+
+#include <Arduino.h>
+#include <Servo.h>
+#include <TeensyThreads.h>
+
+#include "config.h"
+#include "drive_map.h"
+#include "shared.h"
+
+// ------------------------- Hall encoder --------------------------- //
+
+namespace
+{
+  // ISR state, read under noInterrupts().
+  volatile uint32_t lastTransitionTime = 0;
+  volatile uint32_t deltaTime = 0;
+  volatile uint8_t lastState = 0;
+  volatile int8_t direction = 0;
+
+  void onHallChange()
+  {
+    const uint32_t now = micros();
+    const uint8_t state = (digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_a_pin) << 2) |
+                          (digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_b_pin) << 1) |
+                          digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_c_pin);
+    if (state == lastState)
+      return;
+
+    deltaTime = now - lastTransitionTime;
+    lastTransitionTime = now;
+
+    const int8_t d = hallDirection(lastState, state);
+    if (d != 0)
+      direction = d;
+    lastState = state;
+  }
+
+  float filteredRpm = 0.0f;
+
+  // Signed ground speed, m/s. Averages the last rpm_window hall intervals and
+  // low-pass filters the result; reports 0 once no edge has arrived within
+  // stop_timeout_us, rather than a ghost speed from a stale interval.
+  float updateSpeedEstimate()
+  {
+    using namespace cfg::ES2845S_4900KV_MOTOR;
+
+    noInterrupts();
+    const uint32_t dt = deltaTime;
+    const uint32_t lastT = lastTransitionTime;
+    const int8_t dir = direction;
+    interrupts();
+
+    if (dt == 0 || (micros() - lastT) > stop_timeout_us)
+    {
+      filteredRpm = 0.0f;
+      return 0.0f;
+    }
+
+    static uint32_t dt_buffer[rpm_window] = {0};
+    static uint8_t dt_idx = 0;
+    dt_buffer[dt_idx] = dt;
+    dt_idx = (dt_idx + 1) % rpm_window;
+
+    uint32_t sum_dt = 0;
+    for (uint8_t i = 0; i < rpm_window; i++)
+      sum_dt += dt_buffer[i];
+    const uint32_t avg_dt = sum_dt / rpm_window;
+
+    const float transitionsPerSec = 1000000.0f / avg_dt;
+    const float electricalRpm = (transitionsPerSec * 60.0f) / hall_states_per_erev;
+    const float mechanicalRpm = electricalRpm / pole_pairs;
+
+    filteredRpm = (filteredRpm * (1.0f - rpm_filter_alpha)) + (mechanicalRpm * dir * rpm_filter_alpha);
+
+    const float wheelRpm = filteredRpm * cfg::CAR_SPECS::ratio_motor_to_transaxle * cfg::CAR_SPECS::ratio_transaxle_to_diff;
+    return wheelRpm * cfg::CAR_SPECS::wheel_circumference / 60.0f;
+  }
+}
+
+void initHallEncoder()
+{
+  using namespace cfg::ES2845S_4900KV_MOTOR;
+  for (uint8_t pin : {hall_a_pin, hall_b_pin, hall_c_pin})
+  {
+    pinMode(pin, INPUT);
+    attachInterrupt(digitalPinToInterrupt(pin), onHallChange, CHANGE);
+  }
+}
+
+// -------------------------- Speed loop ---------------------------- //
+
+namespace
+{
+  float speedIntegral = 0.0f;
+  float speedLastErr = 0.0f;
+  float speedFilteredDeriv = 0.0f;
+
+  void resetSpeedLoop()
+  {
+    speedIntegral = 0.0f;
+    speedLastErr = 0.0f;
+  }
+
+  // PI plus feedforward on wheel speed. The feedforward term carries the output
+  // across the ESC deadband; the gain schedule adds authority on large error.
+  uint16_t speedPID(float target_mps, float measured_mps, float dt)
+  {
+    using namespace cfg::PID_CTRL;
+    using cfg::ESC_10BL60_G2::speed_pwm_max;
+    using cfg::ESC_10BL60_G2::speed_pwm_min;
+    using cfg::ESC_10BL60_G2::speed_pwm_neutral;
+
+    const float err = target_mps - measured_mps;
+    float ff_term = 0.0f;
+
+    if (target_mps > cfg::ESC_10BL60_G2::cmd_deadband)
+    {
+      ff_term = deadband_fwd_us + kv_ff_fwd * target_mps;
+    }
+    else if (target_mps < -cfg::ESC_10BL60_G2::cmd_deadband)
+    {
+      ff_term = -deadband_rev_us + kv_ff_rev * target_mps;
+      if (measured_mps > -stiction_speed_mps)
+        ff_term -= stiction_kick_rev_us;
+    }
+
+    const float active_kp = (fabsf(err) > err_threshold) ? kp_boost : kp;
+    const float p_term = active_kp * err;
+
+    const float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
+    speedFilteredDeriv = (kd_filter_alpha * raw_deriv) + ((1.0f - kd_filter_alpha) * speedFilteredDeriv);
+    const float d_term = kd * speedFilteredDeriv;
+    speedLastErr = err;
+
+    // Integrate only off the limits, or when the error pushes back into range.
+    const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    const bool hit_upper_limit = (predicted_pwm >= speed_pwm_max) && (err > 0);
+    const bool hit_lower_limit = (predicted_pwm <= speed_pwm_min) && (err < 0);
+    if (!hit_upper_limit && !hit_lower_limit)
+      speedIntegral += err * dt;
+    speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
+
+    const float final_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    return (uint16_t)constrain(final_pwm, (float)speed_pwm_min, (float)speed_pwm_max);
+  }
+
+  constexpr RcThrottleMap rc_throttle_map = {
+      cfg::FLYSKY_IA6B_RX::pulse_min,
+      cfg::ESC_10BL60_G2::speed_pwm_neutral,
+      cfg::FLYSKY_IA6B_RX::pulse_max,
+      cfg::ESC_10BL60_G2::rc_throt_rev_break,
+      cfg::ESC_10BL60_G2::rc_throt_fwd_break,
+      cfg::ESC_10BL60_G2::rc_throt_fwd_floor,
+      cfg::ESC_10BL60_G2::rc_pwm_min,
+      cfg::ESC_10BL60_G2::speed_pwm_neutral,
+      cfg::ESC_10BL60_G2::rc_pwm_max,
+  };
+
+  bool pulseValid(uint16_t pulse)
+  {
+    return rcPulseValid(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max);
+  }
+
+  // Defaults to the permissive position when the channel is absent, so a lost
+  // receiver never leaves the car slow or locked out.
+  bool switchUp(uint16_t pulse)
+  {
+    return rcSwitchUp(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max,
+                      cfg::FLYSKY_IA6B_RX::sw_threshold);
+  }
+}
+
+// --------------------------- Actuation ---------------------------- //
+
+void DriveControl()
+{
+  static Servo steerServo, throtMot;
+  steerServo.attach(cfg::SERVO_D135F::servo_pin);
+  throtMot.attach(cfg::ESC_10BL60_G2::motor_pin);
+
+  steerServo.writeMicroseconds(cfg::SERVO_D135F::angle_pwm_neutral);
+  throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::speed_pwm_neutral);
+
+  uint32_t lastUs = micros();
+
+  while (true)
+  {
+    const uint32_t now = micros();
+    const float dt = (float)(now - lastUs) * 1e-6f;
+    lastUs = now;
+
+    uint16_t ch[cfg::FLYSKY_IA6B_RX::channel_count];
+    RxMutex.lock();
+    memcpy(ch, channelVals, sizeof(ch));
+    RxMutex.unlock();
+
+    const uint16_t steer_ch = ch[cfg::FLYSKY_IA6B_RX::ch_steer];
+    const uint16_t throt_ch = ch[cfg::FLYSKY_IA6B_RX::ch_throt];
+
+    // An unplugged or out-of-range receiver reads outside the pulse band; that
+    // is no RC, not a command.
+    const bool rc_signal = pulseValid(steer_ch) && pulseValid(throt_ch);
+    const bool slow_mode = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_speed_mode]);
+    const bool override_on = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_manual_override]);
+
+    uint16_t rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
+    uint16_t rc_throt = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+    float rc_norm = 0.0f;
+    bool rc_active = false;
+
+    if (rc_signal)
+    {
+      rc_steer = steer_ch;
+      rc_throt = rcThrottleToPwm(throt_ch, rc_throttle_map);
+      rc_norm = rcThrottleToNorm(throt_ch, rc_throttle_map);
+      rc_active =
+          (abs((int)rc_throt - (int)cfg::ESC_10BL60_G2::speed_pwm_neutral) > cfg::AUTO_DRIVE::throt_override_band) ||
+          (abs((int)rc_steer - (int)cfg::SERVO_D135F::angle_pwm_neutral) > cfg::AUTO_DRIVE::steer_override_band);
+    }
+
+    manual_override = override_on;
+    rc_driving = rc_active;
+
+    // Sticks centered or no receiver: a fresh Pi command drives, a stale one
+    // falls to neutral. swD up locks the Pi out entirely, so centered sticks
+    // stop the car rather than handing it back to autonomy.
+    const bool pi_drive = !rc_active && !override_on && piCommandFresh(cfg::UART::rx_timeout);
+
+    uint16_t steer_out = cfg::SERVO_D135F::angle_pwm_neutral;
+    float pi_motor = 0.0f;
+    if (rc_active)
+    {
+      steer_out = rc_steer;
+    }
+    else if (pi_drive)
+    {
+      CmdMutex.lock();
+      const float servo = cmd_setpoint[0];
+      pi_motor = cmd_setpoint[1];
+      CmdMutex.unlock();
+      steer_out = mapNormToPwm(servo, cfg::SERVO_D135F::angle_pwm_min,
+                               cfg::SERVO_D135F::angle_pwm_neutral, cfg::SERVO_D135F::angle_pwm_max);
+    }
+
+    const float measured_mps = updateSpeedEstimate();
+    measured_speed_mps = measured_mps;
+
+    // Slow mode rescales the whole stick onto the reduced band, so full travel
+    // lands on slow_speed_mps exactly instead of clipping the top. It closes
+    // the loop on the RC stick too, since the cap is a speed. Fast-mode RC and
+    // the stale-command failsafe write PWM straight through, so an override
+    // and a stop are both instant.
+    const float speed_cap = slow_mode ? cfg::PID_CTRL::slow_speed_mps : cfg::PID_CTRL::max_speed_mps;
+    const float db = cfg::ESC_10BL60_G2::cmd_deadband;
+
+    bool closed_loop = false;
+    float norm_cmd = 0.0f;
+    if (rc_active)
+    {
+      closed_loop = slow_mode && fabsf(rc_norm) > db;
+      norm_cmd = rc_norm;
+    }
+    else if (pi_drive && fabsf(pi_motor) > db)
+    {
+      closed_loop = true;
+      norm_cmd = pi_motor;
+    }
+
+    float target_mps = 0.0f;
+    uint16_t throt_out;
+    if (closed_loop)
+    {
+      target_mps = throttleToTargetMps(norm_cmd, db, cfg::PID_CTRL::min_speed_mps, speed_cap);
+      throt_out = speedPID(target_mps, measured_mps, dt);
+    }
+    else
+    {
+      throt_out = rc_active ? rc_throt : cfg::ESC_10BL60_G2::speed_pwm_neutral;
+      resetSpeedLoop();
+    }
+
+    steerServo.writeMicroseconds(steer_out);
+    throtMot.writeMicroseconds(throt_out);
+
+    if (cfg::DEBUG::serial_plot)
+    {
+      Serial.print(">Target_MPS:");
+      Serial.println(target_mps);
+      Serial.print(">Measured_MPS:");
+      Serial.println(measured_mps);
+      Serial.print(">Sent_PWM:");
+      Serial.println(throt_out);
+    }
+
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+  }
+}

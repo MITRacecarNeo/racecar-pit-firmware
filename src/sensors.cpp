@@ -1,0 +1,151 @@
+#include "sensors.h"
+
+#include <Arduino.h>
+#include <Adafruit_LSM9DS1.h>
+#include <Adafruit_Sensor.h>
+#include <INA226.h>
+#include <PPMReader.h>
+#include <TeensyThreads.h>
+
+#include "config.h"
+#include "shared.h"
+
+namespace
+{
+  // Pause between begin() attempts on a missing sensor, with the bus released
+  // so the other sensor keeps running.
+  constexpr uint32_t sensor_retry_ms = 100;
+
+  using Lsm = Adafruit_LSM9DS1;
+
+  constexpr Lsm::lsm9ds1AccelRange_t accelRange(uint8_t g)
+  {
+    return g == 2 ? Lsm::LSM9DS1_ACCELRANGE_2G
+           : g == 4 ? Lsm::LSM9DS1_ACCELRANGE_4G
+           : g == 16 ? Lsm::LSM9DS1_ACCELRANGE_16G
+                     : Lsm::LSM9DS1_ACCELRANGE_8G;
+  }
+
+  constexpr Lsm::lsm9ds1AccelDataRate_t accelRate(uint16_t hz)
+  {
+    return hz == 10 ? Lsm::LSM9DS1_ACCELDATARATE_10HZ
+           : hz == 50 ? Lsm::LSM9DS1_ACCELDATARATE_50HZ
+           : hz == 238 ? Lsm::LSM9DS1_ACCELDATARATE_238HZ
+           : hz == 476 ? Lsm::LSM9DS1_ACCELDATARATE_476HZ
+           : hz == 952 ? Lsm::LSM9DS1_ACCELDATARATE_952HZ
+                       : Lsm::LSM9DS1_ACCELDATARATE_119HZ;
+  }
+
+  constexpr Lsm::lsm9ds1MagGain_t magGain(uint8_t gauss)
+  {
+    return gauss == 4 ? Lsm::LSM9DS1_MAGGAIN_4GAUSS
+           : gauss == 12 ? Lsm::LSM9DS1_MAGGAIN_12GAUSS
+           : gauss == 16 ? Lsm::LSM9DS1_MAGGAIN_16GAUSS
+                         : Lsm::LSM9DS1_MAGGAIN_8GAUSS;
+  }
+
+  constexpr Lsm::lsm9ds1GyroScale_t gyroScale(uint16_t dps)
+  {
+    return dps == 245 ? Lsm::LSM9DS1_GYROSCALE_245DPS
+           : dps == 2000 ? Lsm::LSM9DS1_GYROSCALE_2000DPS
+                         : Lsm::LSM9DS1_GYROSCALE_500DPS;
+  }
+}
+
+void ReadCurrAndVolt()
+{
+  static INA226 ina(cfg::INA226_SENSOR::i2c_addy);
+
+  while (true)
+  {
+    I2CMutex.lock();
+    const bool found = ina.begin();
+    if (found)
+    {
+      ina.setAverage(cfg::INA226_SENSOR::avg_set);
+      ina.setMaxCurrentShunt(cfg::INA226_SENSOR::max_curr_expected, cfg::INA226_SENSOR::shunt_resistance);
+    }
+    I2CMutex.unlock();
+    if (found)
+      break;
+    threads.delay(sensor_retry_ms);
+  }
+  power_ok = true;
+
+  while (true)
+  {
+    I2CMutex.lock();
+    const float amps = ina.getCurrent();
+    const float volts = ina.getBusVoltage();
+    I2CMutex.unlock();
+
+    PowerMutex.lock();
+    power_amps = amps;
+    power_volts = volts;
+    PowerMutex.unlock();
+
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+  }
+}
+
+void ReadIMUStates()
+{
+  static Adafruit_LSM9DS1 lsm;
+
+  while (true)
+  {
+    I2CMutex.lock();
+    const bool found = lsm.begin();
+    if (found)
+    {
+      lsm.setupAccel(accelRange(cfg::LSM9DS1_IMU::accel_range_g), accelRate(cfg::LSM9DS1_IMU::accel_rate_hz));
+      lsm.setupMag(magGain(cfg::LSM9DS1_IMU::mag_range_gauss));
+      lsm.setupGyro(gyroScale(cfg::LSM9DS1_IMU::gyro_range_dps));
+    }
+    I2CMutex.unlock();
+    if (found)
+      break;
+    threads.delay(sensor_retry_ms);
+  }
+  imu_ok = true;
+
+  while (true)
+  {
+    sensors_event_t a, m, g, temp;
+    I2CMutex.lock();
+    lsm.getEvent(&a, &m, &g, &temp);
+    I2CMutex.unlock();
+
+    ImuMutex.lock();
+    imuVals[0] = a.acceleration.x;
+    imuVals[1] = a.acceleration.y;
+    imuVals[2] = a.acceleration.z;
+    imuVals[3] = g.gyro.x;
+    imuVals[4] = g.gyro.y;
+    imuVals[5] = g.gyro.z;
+    imuVals[6] = m.magnetic.x;
+    imuVals[7] = m.magnetic.y;
+    imuVals[8] = m.magnetic.z;
+    ImuMutex.unlock();
+
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+  }
+}
+
+void RxReceive()
+{
+  PPMReader ppm(cfg::FLYSKY_IA6B_RX::ppm_pin, cfg::FLYSKY_IA6B_RX::channel_count);
+
+  while (true)
+  {
+    uint16_t values[cfg::FLYSKY_IA6B_RX::channel_count];
+    for (uint8_t i = 0; i < cfg::FLYSKY_IA6B_RX::channel_count; i++)
+      values[i] = ppm.latestValidChannelValue(i + 1, 0);
+
+    RxMutex.lock();
+    memcpy(channelVals, values, sizeof(channelVals));
+    RxMutex.unlock();
+
+    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+  }
+}

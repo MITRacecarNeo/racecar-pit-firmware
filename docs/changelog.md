@@ -5,6 +5,79 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.0] - Unreleased
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged; the info reply is additive and only sent on request, so earlier
+drivers run as before. The minor jumps from 0.7 to 0.9 to re-align with the
+driver; there is no 0.8.0 firmware release.
+
+### Added
+- Firmware info reply. The Pi sets `SystemState` bit `0x20`; the Teensy sends
+  the firmware version, commit, compiled configuration, and sensor status as
+  ASCII `key=value` lines in CRC-checked chunks (magic `0xFEEDC0DE`), one chunk
+  after each telemetry frame. Format and keys in `docs/protocol.md`.
+- `src/version.h` and `scripts/build_flags.py`: the build embeds the
+  version, the short commit, and a dirty flag.
+- `scripts/pit_uart.py` (was `racecar-pit-pi/PiUART.py`), a bench tool for the
+  link, with `--info` and `--yaml`, chunk reassembly and typed
+  parsing (`InfoAssembler`, `parse_info`, `info_to_yaml`).
+- Host tests: `tests/test_info` (14 cases) and five RC stick map
+  cases in `test_logic`; info decoding and reassembly in the pytest suite
+  (29 cases). Both suites check the same reference info packet byte for byte.
+- `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
+  `data/`.
+- `cfg::I2C::clock_hz` (100 kHz, the previous default),
+  `cfg::UART::tx_buffer_bytes`, `cfg::UART::rx_read_timeout_ms`,
+  `cfg::SYS_STATE::info_request`.
+
+### Changed
+- Repository layout: Teensy firmware only. `platformio.ini` at the root,
+  firmware in `src/`, tunables in `config/config.h`, host tests in `tests/`,
+  and the Pi bench tool in `scripts/`. The Pi side of the link lives in
+  `racecar_neo_ros2_driver`.
+- `helpers.cpp` split by subsystem into `shared`, `link`, `drive`, `sensors`,
+  and `displays`. `testPWM` is now `DriveControl`; `ledStuffs` is now
+  `updateLedStrip`.
+- `config.h` is Arduino-free. IMU ranges are plain numbers mapped onto the
+  Adafruit enums in `sensors.cpp`; wire constants (magic numbers, channel
+  count, buffer sizes) live in `packets.h`. The host tests read the shipped
+  values instead of mirrored copies.
+- The RC-manual PWM endpoints are compile-time constants
+  (`rc_pwm_min`/`rc_pwm_max`) instead of globals set in `setup()`.
+- The RC stick-to-PWM and stick-to-command maps moved into `drive_map`
+  (`rcThrottleToPwm`, `rcThrottleToNorm`, `mapRange` with Teensyduino's
+  integer rounding) and are host tested.
+- `UARTTx` assembles telemetry at send time and keeps a running deadline in
+  place of restarting its timer after each write; `Serial1` has a 512-byte
+  transmit buffer so a slot never blocks. Measured on the car: 141.6 -> 151.4
+  Hz; the thread still wakes late, so the rate stays under 200 Hz.
+- `UARTRx` checks the byte count of each command read and times out after
+  20 ms instead of the 1 s stream default.
+- The platform and every library are pinned to exact versions.
+- `scripts/pit_uart.py` defaults to `/dev/neo-pit-pcb`.
+- Speed band set to the indoor build the cars run: `min_speed_mps` 0.75 ->
+  0.5 m/s, `max_speed_mps` 5.0 -> 1.0 m/s. The field build raises the ceiling
+  to 4.0 m/s. Slow mode stays at 1.0 m/s.
+
+### Fixed
+- The speed estimate was updated by two threads (telemetry and actuation),
+  each pushing samples into the same filter. Only the actuation thread updates
+  it now; telemetry reads its result.
+- A sensor missing at boot held the I2C bus in its `begin()` retry loop, so the
+  other sensor never started. Retries now release the bus between attempts.
+- Two sensor threads shared one `errorFlag` and cleared each other's error.
+  Each sensor now has its own presence flag, reported in the info reply.
+
+### Removed
+- The `fillTxBuff` thread, the receive ping/pong copy, and `ReceiveMutex`,
+  `RecPongMutex`, `TransmitMutex`, `SPIMutex`, and `ErrMutex`, each guarding
+  state touched by a single thread.
+- The unused INA226 power read (`getPower`) on every 1 ms cycle.
+- The unused `BasicLinearAlgebra` dependency.
+- `initRxHeader`, whose fields every received frame overwrote.
+- PlatformIO template READMEs in `include/`, `lib/`, and `test/`.
+
 ## [0.7.1] - 2026-09-06
 
 Pairs with `racecar_neo_ros2_driver` v0.7.x. Wire format unchanged.

@@ -1,17 +1,27 @@
 #include <unity.h>
 
 #include "battery.h"
+#include "config.h"
 #include "crc16.h"
 #include "drive_map.h"
 
-// Bounds mirrored from cfg::SERVO_D135F and cfg::ESC_10BL60_G2, restated so the
-// host test stays free of the Arduino headers config.h pulls in.
-static const uint16_t STEER_LO = 1025, STEER_NEU = 1500, STEER_HI = 1975;
-static const uint16_t THROT_LO = 800, THROT_NEU = 1500, THROT_HI = 2200;
-// Mirrored from cfg::AUTO_DRIVE and cfg::FLYSKY_IA6B_RX.
-static const uint16_t RC_LO = 900, RC_HI = 2100, SW_THRESH = 1500;
-// Mirrored from cfg::PID_CTRL and cfg::ESC_10BL60_G2.
-static const float DEADBAND = 0.01f, MIN_MPS = 0.75f, MAX_MPS = 5.0f, SLOW_MPS = 1.0f;
+static const uint16_t STEER_LO = cfg::SERVO_D135F::angle_pwm_min;
+static const uint16_t STEER_NEU = cfg::SERVO_D135F::angle_pwm_neutral;
+static const uint16_t STEER_HI = cfg::SERVO_D135F::angle_pwm_max;
+static const uint16_t THROT_LO = cfg::ESC_10BL60_G2::speed_pwm_min;
+static const uint16_t THROT_NEU = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+static const uint16_t THROT_HI = cfg::ESC_10BL60_G2::speed_pwm_max;
+static const uint16_t RC_LO = cfg::AUTO_DRIVE::rc_valid_min;
+static const uint16_t RC_HI = cfg::AUTO_DRIVE::rc_valid_max;
+static const uint16_t SW_THRESH = cfg::FLYSKY_IA6B_RX::sw_threshold;
+static const float DEADBAND = cfg::ESC_10BL60_G2::cmd_deadband;
+static const float MIN_MPS = cfg::PID_CTRL::min_speed_mps;
+static const float MAX_MPS = cfg::PID_CTRL::max_speed_mps;
+static const float SLOW_MPS = cfg::PID_CTRL::slow_speed_mps;
+
+// The RC map DriveControl uses, fixed to the shipped 0.25 trim so the expected
+// PWM values below stay hand-checkable.
+static const RcThrottleMap RC_MAP = {1000, 1500, 2000, 1475, 1525, 1575, 1325, 1500, 1675};
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -150,8 +160,10 @@ static void test_setpoint_slow_mode_rescales_rather_than_clips(void)
     TEST_ASSERT_TRUE(half > MIN_MPS);
     TEST_ASSERT_TRUE(half < SLOW_MPS);
 
-    float fast_half = throttleToTargetMps(0.5f, DEADBAND, MIN_MPS, MAX_MPS);
-    TEST_ASSERT_TRUE(fast_half > half);
+    // A wider band than the shipped one, so the rescale shows even when the
+    // build's ceiling equals the slow-mode cap.
+    float wide_half = throttleToTargetMps(0.5f, DEADBAND, MIN_MPS, 4.0f);
+    TEST_ASSERT_TRUE(wide_half > half);
 }
 
 static void test_setpoint_just_past_deadband_starts_at_min(void)
@@ -171,6 +183,56 @@ static void test_setpoint_clamps_and_stays_in_band(void)
         TEST_ASSERT_TRUE(mps <= SLOW_MPS + 1e-4f);
         TEST_ASSERT_TRUE(mps >= -SLOW_MPS - 1e-4f);
     }
+}
+
+// --------------------------- RC throttle -------------------------- //
+
+static void test_map_range_matches_teensyduino_rounding(void)
+{
+    TEST_ASSERT_EQUAL_INT32(1675, mapRange(2000, 1500, 2000, 1575, 1675));
+    TEST_ASSERT_EQUAL_INT32(1580, mapRange(1526, 1500, 2000, 1575, 1675));
+    TEST_ASSERT_EQUAL_INT32(1325, mapRange(1000, 1000, 1500, 1325, 1475));
+    TEST_ASSERT_EQUAL_INT32(1467, mapRange(1474, 1000, 1500, 1325, 1475));
+    TEST_ASSERT_EQUAL_INT32(50, mapRange(7, 7, 7, 0, 100));
+}
+
+static void test_rc_map_matches_config(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(cfg::ESC_10BL60_G2::rc_pwm_min, RC_MAP.pwm_min);
+    TEST_ASSERT_EQUAL_UINT16(cfg::ESC_10BL60_G2::rc_pwm_max, RC_MAP.pwm_max);
+    TEST_ASSERT_EQUAL_UINT16(cfg::ESC_10BL60_G2::rc_throt_fwd_floor, RC_MAP.fwd_floor);
+    TEST_ASSERT_EQUAL_UINT16(cfg::ESC_10BL60_G2::rc_throt_fwd_break, RC_MAP.fwd_break);
+    TEST_ASSERT_EQUAL_UINT16(cfg::ESC_10BL60_G2::rc_throt_rev_break, RC_MAP.rev_break);
+}
+
+// Inside the deadzone the ESC sees neutral; just past it the output jumps to
+// the first PWM that moves the car, so the stick has no dead travel.
+static void test_rc_throttle_deadzone_and_floor(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1500, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1525, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1475, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1580, rcThrottleToPwm(1526, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1467, rcThrottleToPwm(1474, RC_MAP));
+}
+
+static void test_rc_throttle_endpoints_and_clamp(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(1675, rcThrottleToPwm(2000, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1325, rcThrottleToPwm(1000, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1675, rcThrottleToPwm(2100, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1325, rcThrottleToPwm(900, RC_MAP));
+}
+
+static void test_rc_throttle_norm(void)
+{
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, rcThrottleToNorm(1500, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, rcThrottleToNorm(1520, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, rcThrottleToNorm(2000, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(-1.0f, rcThrottleToNorm(1000, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(0.5f, rcThrottleToNorm(1750, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(-0.5f, rcThrottleToNorm(1250, RC_MAP));
+    TEST_ASSERT_EQUAL_FLOAT(1.0f, rcThrottleToNorm(2100, RC_MAP));
 }
 
 // --------------------------- battery SoC -------------------------- //
@@ -232,6 +294,11 @@ int main(int, char **)
     RUN_TEST(test_setpoint_slow_mode_rescales_rather_than_clips);
     RUN_TEST(test_setpoint_just_past_deadband_starts_at_min);
     RUN_TEST(test_setpoint_clamps_and_stays_in_band);
+    RUN_TEST(test_map_range_matches_teensyduino_rounding);
+    RUN_TEST(test_rc_map_matches_config);
+    RUN_TEST(test_rc_throttle_deadzone_and_floor);
+    RUN_TEST(test_rc_throttle_endpoints_and_clamp);
+    RUN_TEST(test_rc_throttle_norm);
     RUN_TEST(test_soc_endpoints_and_clamping);
     RUN_TEST(test_soc_is_monotonic_across_the_band);
     RUN_TEST(test_soc_tracks_the_lipo_knee_not_the_voltage);
