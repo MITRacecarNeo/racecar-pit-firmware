@@ -4,6 +4,43 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-010 - 2026-10-25
+
+### Setup
+As TL-009, new firmware flashed (`e330426` source plus the uncommitted tree,
+`fw.git_dirty=1`). The teleop service could not be stopped without a password
+(polkit), so `pit_node` kept the UART open and reading.
+
+### Hypothesis
+The Teensy answers the info request with the compiled configuration, and the
+reassembly survives lost chunks.
+
+### Method
+`python3 scripts/pit_uart.py --info --yaml firmware.yaml` on `/dev/neo-pit-pcb`
+while `pit_node` ran. Diff the reply against a host build of `writeFirmwareInfo`
+with the same config and commit flags. Probe telemetry for 5 s afterward.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Reply | 1514 | B |
+| Keys | 72 | - |
+| Telemetry after | 151.8 | Hz |
+
+### Observations
+- The reply came back complete and matched the host build byte for byte:
+  `speed.min_mps=0.500`, `speed.max_mps=1.000`, `status.imu=ok`,
+  `status.power=ok`. The YAML wrote cleanly.
+- With two readers on the port, each process saw only part of the byte
+  stream, so chunks were lost; the assembler completed from later cycles.
+- `pit_node` telemetry continued at 151.8 Hz.
+
+### Conclusion
+Supported. In normal use run the tool with teleop stopped; sharing the port
+drops bytes for both readers.
+
+---
+
 ## TL-009 - 2026-10-25
 
 ### Setup
