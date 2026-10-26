@@ -13,6 +13,7 @@ format in `src/packets.h` and the version numbers that select a matching pair; s
 
 ## Table of contents
 
+- [Hardware](#hardware)
 - [Versioning](#versioning)
 - [Repository layout](#repository-layout)
 - [Branches](#branches)
@@ -27,6 +28,12 @@ format in `src/packets.h` and the version numbers that select a matching pair; s
 - [Architecture](#architecture)
 - [Changelog](#changelog)
 - [License](#license)
+
+## Hardware
+
+This firmware requires the NEO-PIT PCB. It does not run on a stock RACECAR Neo
+with the Pololu Maestro. The PCB fabrication files are open hardware. They are
+not yet public; publication is pending release review.
 
 ## Versioning
 
