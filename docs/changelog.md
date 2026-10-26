@@ -40,7 +40,7 @@ driver; there is no 0.8.0 firmware release.
 - `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
   `data/`.
 - `cfg::I2C::clock_hz`, 400 kHz (the bus ran at 100 kHz before),
-  `cfg::INA226_SENSOR::poll_ms` (1 ms, the previous rate),
+  `cfg::INA226_SENSOR::poll_ms`,
   `cfg::UART::tx_buffer_bytes`, `cfg::UART::rx_read_timeout_ms`,
   `cfg::SYS_STATE::info_request`.
 
@@ -50,7 +50,7 @@ driver; there is no 0.8.0 firmware release.
   and the Pi bench tool in `scripts/`. The Pi side of the link lives in
   `racecar_neo_ros2_driver`.
 - `helpers.cpp` split by subsystem into `shared`, `link`, `drive`, `sensors`,
-  and `displays`. `testPWM` is now `DriveControl`; `ledStuffs` is now
+  and `displays`. `testPWM` is now the drive tick (`driveTick`); `ledStuffs` is now
   `updateLedStrip`.
 - `config.h` is Arduino-free. IMU ranges are plain numbers mapped onto the
   Adafruit enums in `sensors.cpp`; wire constants (magic numbers, channel
@@ -61,12 +61,8 @@ driver; there is no 0.8.0 firmware release.
 - The RC stick-to-PWM and stick-to-command maps moved into `drive_map`
   (`rcThrottleToPwm`, `rcThrottleToNorm`, `mapRange` with Teensyduino's
   integer rounding) and are host tested.
-- `UARTTx` assembles telemetry at send time and keeps a running deadline in
-  place of restarting its timer after each write; `Serial1` has a 512-byte
-  transmit buffer so a slot never blocks. Measured on the car: 141.6 -> 151.4
-  Hz; the thread still wakes late, so the rate stays under 200 Hz.
-- `UARTRx` checks the byte count of each command read and times out after
-  20 ms instead of the 1 s stream default.
+- `Serial1` has a 512-byte transmit buffer, so a telemetry frame and an info
+  chunk never wait for the UART.
 - The platform and every library are pinned to exact versions.
 - `scripts/pit_uart.py` defaults to `/dev/neo-pit-pcb`.
 - The charge bar curve is a 15-point measured discharge of the 5000 mAh 2S
@@ -75,7 +71,6 @@ driver; there is no 0.8.0 firmware release.
 - Speed band set to the indoor build the cars run: `min_speed_mps` 0.75 ->
   0.5 m/s, `max_speed_mps` 5.0 -> 1.0 m/s. The field build raises the ceiling
   to 4.0 m/s. Slow mode stays at 1.0 m/s.
-
 - The drive loop runs in a 1 kHz IntervalTimer interrupt instead of a
   thread, so it keeps its period whatever the threads do. The RC channels and
   the Pi drive command it reads are shared through sequence counters
@@ -85,12 +80,14 @@ driver; there is no 0.8.0 firmware release.
   `imu.read_hz`.
 - `UARTRx` assembles command frames from the bytes that have arrived
   (`src/command_framer.*`) instead of waiting in `readBytes` for a whole
-  frame.
-- The `serial_plot` trace prints from `loop()`.
-- Telemetry is sent from a 200 Hz IntervalTimer interrupt instead of a
-  thread: every gap between frames is 5.00 ms. A thread (`InfoBuilder`)
-  builds the info payload into one of two buffers (`src/info_buffers.h`) and
-  the interrupt sends chunks from the other. The IMU and INA226 readings are
+  frame, and drops a partial frame after 20 ms (`rx_read_timeout_ms`; the
+  stream default was 1 s).
+- The `serial_plot` trace prints from `loop()`, and only in a build with
+  `-DRCN_SERIAL_PLOT`.
+- Telemetry is sent from a 200 Hz IntervalTimer interrupt instead of the
+  `UARTTx` thread: every gap between frames is 5.00 ms (was 141.6 Hz). A
+  thread (`InfoBuilder`) builds the info payload into one of two buffers
+  (`src/info_buffers.h`) and the interrupt sends chunks from the other. The IMU and INA226 readings are
   shared through sequence counters in place of `ImuMutex` and `PowerMutex`.
 - The LSM9DS1 is read as three transfers (accel, gyro, mag) in place of
   `getEvent()`, which also read the temperature and read the magnetometer
@@ -106,7 +103,6 @@ driver; there is no 0.8.0 firmware release.
   setpoint, oscillating, to 0.08 to 0.09 m/s fast at 3 s.
 - `speedPID` keeps its output on the target's side of neutral, and in reverse
   applies `kp_boost` only near a standstill.
-- The `serial_plot` trace is off unless built with `-DRCN_SERIAL_PLOT`.
 - swA slow mode is now the low pulse (lever up on the FS-i6, its start
   position); high is fast. A receiver with no signal reads fast. swD is
   unchanged: high (lever down) is manual override, low or no signal leaves the
@@ -126,8 +122,8 @@ driver; there is no 0.8.0 firmware release.
   `Wire.begin()`, which resets the bus to 100 kHz. The clock is applied again
   after the LSM9DS1 starts.
 - The speed estimate was updated by two threads (telemetry and actuation),
-  each pushing samples into the same filter. Only the actuation thread updates
-  it now; telemetry reads its result.
+  each pushing samples into the same filter. Only the drive tick updates it
+  now; telemetry reads its result.
 - A sensor missing at boot held the I2C bus in its `begin()` retry loop, so the
   other sensor never started. Retries now release the bus between attempts.
 - Two sensor threads shared one `errorFlag` and cleared each other's error.

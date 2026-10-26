@@ -138,17 +138,17 @@ values come from `config/config.h` unless noted.
 | `speed.max_mps` | 1.000 | setpoint at full command |
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |
 | `speed.deadband` | 0.010 | normalized commands inside this are stop |
-| `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 30.000, 0.000 | speed loop gains, us per m/s |
+| `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 60.000, 0.000 | speed loop gains, us per m/s |
 | `pid.max_integral` | 150.000 | integrator clamp |
 | `pid.kp_boost`, `pid.boost_error_mps` | 60.000, 0.250 | gain above this error |
-| `pid.ff_fwd_us`, `pid.ff_rev_us` | 75.0, 70.0 | static feedforward across the ESC deadband |
-| `pid.kv_ff_fwd`, `pid.kv_ff_rev` | 10.000, 40.000 | feedforward per m/s |
-| `pid.stiction_kick_rev_us`, `pid.stiction_speed_mps` | 100.0, 0.050 | reverse start kick below this speed |
+| `pid.ff_fwd_us`, `pid.ff_rev_us` | 55.0, 28.0 | static feedforward across the ESC deadband |
+| `pid.kv_ff_fwd`, `pid.kv_ff_rev` | 14.000, 8.000 | feedforward per m/s |
+| `pid.stiction_kick_rev_us`, `pid.stiction_speed_mps` | 0.0, 0.050 | reverse start kick below this speed (0 is off) |
 | `drivetrain.wheel_diameter_m` | 0.0720 | wheel diameter |
 | `drivetrain.gear_ratio` | 0.119628 | wheel rev per motor rev |
 | `encoder.edges_per_motor_rev` | 12 | hall transitions per motor rev |
 | `encoder.m_per_edge` | 0.002255 | ground distance per hall transition |
-| `encoder.rpm_window`, `encoder.filter_alpha` | 5, 0.800 | speed estimate averaging and filter |
+| `encoder.rpm_window`, `encoder.filter_alpha` | 5, 0.800 | hall intervals in the speed median, filter weight |
 | `encoder.stop_timeout_us` | 30000 | no edge for this long reads 0 m/s |
 | `rc.ch_steer`, `rc.ch_throttle`, `rc.ch_speed_mode`, `rc.ch_manual_override` | 3, 1, 4, 7 | zero-based telemetry RC indices |
 | `rc.switch_threshold_us` | 1500 | switch up at or above |

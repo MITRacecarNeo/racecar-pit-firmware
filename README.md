@@ -61,26 +61,33 @@ re-align with the driver. There are no `0.6.0` or `0.8.0` firmware tags.
 ## Repository layout
 
 ```
-platformio.ini          firmware env (teensy41) and host test env (native)
+platformio.ini          firmware envs (teensy41, teensy41_profile, teensy41_wdt_test), host tests (native)
 config/
   config.h              all tunables (UART, ESC, servo, encoder, RC, PID, IMU)
 src/                    Teensy firmware
   main.cpp              boot: peripherals, interrupts, thread launch
-  shared.{h,cpp}        state shared between threads, one mutex per resource
-  link.{h,cpp}          UART threads: telemetry, info chunks, commands
-  drive.{h,cpp}         actuation thread, speed loop, hall encoder
+  shared.{h,cpp}        state shared with the interrupts (sequence counters)
+  link.{h,cpp}          telemetry timer, info builder, command receive
+  drive.{h,cpp}         1 kHz drive tick, speed loop, hall encoder
   sensors.{h,cpp}       INA226, LSM9DS1, FlySky PPM threads
   displays.{h,cpp}      dot matrix thread, LED strip
+  watchdog.{h,cpp}      RTWDOG and reset cause; heartbeat.h per-context bits
   packets.{h,cpp}       wire format, info chunk builder
-  info.{h,cpp}          info payload
+  command_framer.*      command frame assembly from arriving bytes
+  info.{h,cpp}          info payload; info_buffers.h double buffer
+  seqlock.h             sequence counter for interrupt-shared state
+  profile.*, prof_stats.*     profiling build hooks and statistics
   version.h             firmware version
   crc16, drive_map, battery   Arduino-free logic
 tests/
-  test_logic/, test_info/     host unit tests (pio test -e native)
-  scripts/              pytest suite for scripts/pit_uart.py
+  test_*/               host unit tests (pio test -e native)
+  scripts/              pytest suite for scripts/
 scripts/
   build_flags.py        git commit flags for the firmware build
+  upload.py             upload command with retry
   pit_uart.py           bench tool: drive the link from the Pi without ROS
+  profile_capture.py    record and check a profiling run
+  telemetry_probe.py    telemetry rate and gaps as the driver publishes them
 data/                   hardware captures for the test log
 docs/                   protocol, architecture, changelog, test log
 pyproject.toml          pytest, ruff, black, mypy settings for scripts/
@@ -165,13 +172,18 @@ Actuation follows an RC-priority, Pi-fallback model with no arm switch:
 - A command stale past `rx_timeout` (50 ms) falls to neutral. A dropped or
   absent receiver holds neutral instead of extrapolating to full reverse.
 
-The ESC has a wide deadband either side of neutral. A static feedforward term
-(`deadband_fwd_us` / `deadband_rev_us`) carries the output across it, `kp_boost`
-adds authority once the error exceeds `err_threshold`, and
-`stiction_kick_rev_us` adds reverse PWM while the wheels are still. The
-integrator only accumulates when the output is off its limit or the error pushes
-back toward the usable range. `speed_pwm_min` sits deeper than a symmetric
-forward throw to clear the reverse deadband.
+The ESC has a deadband either side of neutral. A feedforward term per
+direction (`deadband_fwd_us` plus `kv_ff_fwd` per m/s, `deadband_rev_us` plus
+`kv_ff_rev`) carries the output across it, and `kp_boost` adds authority once
+the error exceeds `err_threshold`; in reverse the boost applies only near a
+standstill. The output stays on the setpoint's side of neutral, because a
+forward pulse while reversing makes this ESC brake. The integrator only
+accumulates when the output is off its limit or the error pushes back toward
+the usable range. `stiction_kick_rev_us` adds reverse PWM while the wheels are
+still (0 in the shipped tuning). `speed_pwm_min` sits deeper than a symmetric
+forward throw to clear the reverse deadband. On the floor the loop holds 0.5,
+0.75 and 1.0 m/s within 0.04 m/s forward; reverse runs 0.08 to 0.09 m/s fast
+after 3 s and is still converging (`docs/test-log.md`, TL-022).
 
 Polarity is corrected on the Pi side (`pit.yaml` `speed_sign` /
 `steering_sign`), not here.
@@ -183,10 +195,11 @@ LSM9DS1 sample (accel m/s^2, gyro rad/s, mag uT), the INA226 bus voltage (mV)
 and current (mA), the eight FlySky RC channels (raw pulse widths, us), and a
 microsecond timestamp. Current is packed as mA rather than truncated amps so
 sub-amp resolution survives the `uint16`. The encoder field carries signed
-ground speed in m/s, not RPM, as computed by the drive tick: it averages
-the last five hall intervals, zeroes on a hall-transition timeout
+ground speed in m/s, not RPM, as computed by the drive tick: it takes the
+median of the last five hall intervals, zeroes on a hall-transition timeout
 (`stop_timeout_us`, 30 ms) instead of reporting a ghost speed from a stale
-interval, and applies the two gear ratios and the wheel circumference.
+interval, and applies the two gear ratios and the wheel circumference. The
+sign follows the hall sequence; a reversal needs two agreeing transitions.
 
 The `int32` timestamp is `micros()` and wraps every ~35.8 minutes; treat it as a
 wrapping counter.
@@ -312,10 +325,16 @@ UART (Teensy `Serial1` to the Pi's `/dev/neo-pit-pcb`, a udev symlink to
 `ttyAMA0` on Pi 5 / Ubuntu). The Pi needs `enable_uart=1` and a reboot to
 activate GPIO14/15.
 
-Set `cfg::DEBUG::serial_plot` to enable the Teleplot-style speed-loop trace
-on the USB serial port. It prints the latest target speed, measured speed and
-ESC PWM from `loop()` every 25 ms, so it samples the 1 kHz loop rather than
-following every tick.
+The Teleplot-style speed-loop trace is a build option:
+
+```sh
+PLATFORMIO_BUILD_FLAGS="-DRCN_SERIAL_PLOT" pio run -t upload
+```
+
+It prints the latest target speed, measured speed and ESC PWM on the USB
+serial port from `loop()` every 25 ms, so it samples the 1 kHz loop rather
+than following every tick. Lines are skipped while nothing reads the port.
+Flash the plain build afterward.
 
 ## Tests
 
@@ -325,9 +344,12 @@ Host unit tests over the Arduino-free logic, from the repository root:
 pio test -e native
 ```
 
-40 cases in two suites: `test_logic` (CRC, PWM mapping, RC stick map, hall
-decode, switches, speed setpoints, state-of-charge curve) and `test_info`
-(payload format and content, chunking, the reference packet).
+79 cases in seven suites: `test_logic` (CRC, PWM mapping, RC stick map, hall
+decode and direction filter, interval median, switches, speed setpoints,
+state-of-charge curve), `test_info` (payload format and content, chunking,
+the reference packet), `test_framer` (command frame assembly), `test_seqlock`,
+`test_info_buffers`, `test_heartbeat`, and `test_prof` (profiling
+statistics).
 
 Bench tool tests and checks, from the repository root:
 
@@ -363,8 +385,8 @@ Hardware runs are recorded in `docs/test-log.md`.
 
 ## Architecture
 
-See `docs/architecture.md` for the thread and mutex map, the data pipeline, and
-the pin assignments, and `docs/protocol.md` for the wire format.
+See `docs/architecture.md` for the threads and interrupts, the shared state,
+the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire format.
 
 ## Changelog
 
@@ -373,12 +395,17 @@ Latest entries; full history in `docs/changelog.md`.
 ### [0.9.0] - Unreleased
 Pairs with driver v0.9.x; telemetry and command sizes unchanged.
 - Added: firmware info reply (version, commit, compiled configuration, sensor
-  status) on request through `SystemState` bit `0x20`; `docs/protocol.md`;
-  `scripts/pit_uart.py` bench tool with `--info` and `--yaml`.
-- Changed: repository layout (`src/`, `config/`, `tests/`, `scripts/`);
-  firmware split by subsystem; platform and libraries pinned; telemetry
-  141.6 -> 151.4 Hz.
-- Fixed: two threads fed the speed filter; a missing sensor held the I2C bus.
+  status) on request through `SystemState` bit `0x20`; hardware watchdog
+  (100 ms); profiling and watchdog test builds; `scripts/pit_uart.py`,
+  `scripts/upload.py`; `docs/protocol.md`.
+- Changed: drive loop in a 1 kHz timer interrupt and telemetry in a 200 Hz
+  timer interrupt (every frame gap 5.00 ms, was 141.6 Hz); I2C at 400 kHz;
+  speed loop refit on the floor (forward within 0.04 m/s, was 0.21 to 0.25
+  m/s fast); swA slow on the low pulse; repository layout; platform and
+  libraries pinned.
+- Fixed: speed spikes from bounce intervals and sign flips in the speed
+  estimate; the I2C clock never left 100 kHz; a missing sensor held the I2C
+  bus.
 - Removed: the `fillTxBuff` thread, unused mutexes, `BasicLinearAlgebra`.
 
 ### [0.7.1] - 2026-09-06

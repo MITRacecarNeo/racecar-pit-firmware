@@ -63,6 +63,9 @@ A practice run before sweep 1, on `kv_ff_rev` 40 and kick 100 us, reversed at
 - Sweep 4: reverse still decreasing at 3 s (-1.17 m/s mean over 1 to 3 s,
   -1.09 over 2 to 3 s at a 1.0 setpoint): the start boost overshoots and the
   integrator pulls it back over about 3 s.
+- Manual driving afterward on the same firmware (operator report): starts
+  and stops without the earlier jerk, and forward and reverse respond the
+  same way to the stick.
 - The lidar end-of-lane check ended one practice reverse run on the antennas,
   which sit 0.27 m behind the lidar and sway past the rear of the footprint;
   they are masked in the sweep tool.
