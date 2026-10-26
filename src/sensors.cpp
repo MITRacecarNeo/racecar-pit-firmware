@@ -84,7 +84,7 @@ void ReadCurrAndVolt()
     power_volts = volts;
     PowerMutex.unlock();
 
-    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+    threads.delay(cfg::INA226_SENSOR::poll_ms);
   }
 }
 

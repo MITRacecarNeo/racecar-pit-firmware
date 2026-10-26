@@ -258,20 +258,30 @@ static void test_soc_is_monotonic_across_the_band(void)
     }
 }
 
-// The point of the curve: the flat 7.6-8.0 V plateau holds most of the usable
-// charge, and below 7.4 V the bar has to be nearly empty. A linear map would
-// read 43% and 29% at these two points.
-static void test_soc_tracks_the_lipo_knee_not_the_voltage(void)
+// Every measured point returns its own charge exactly.
+static void test_soc_hits_each_measured_point(void)
 {
-    TEST_ASSERT_EQUAL_UINT8(40, batterySocPercent(7600));
-    TEST_ASSERT_EQUAL_UINT8(13, batterySocPercent(7400));
-    TEST_ASSERT_TRUE(batterySocPercent(8000) - batterySocPercent(7600) > 30);
+    const uint16_t mv[] = {8200, 8110, 8050, 7860, 7740, 7620, 7545, 7485, 7450, 7395, 7305, 7280, 7195};
+    const uint8_t pct[] = {100, 95, 90, 80, 70, 60, 50, 40, 30, 20, 10, 5, 2};
+    for (size_t i = 0; i < sizeof(mv) / sizeof(mv[0]); i++)
+        TEST_ASSERT_EQUAL_UINT8(pct[i], batterySocPercent(mv[i]));
+}
+
+// A full battery reads about 8.19 V under load and must show full; the last
+// 10% sits between 7.3 and 7.0 V. A linear map would read 85% and 22% there.
+static void test_soc_tracks_the_curve_not_the_voltage(void)
+{
+    TEST_ASSERT_EQUAL_UINT8(100, batterySocPercent(8300));
+    TEST_ASSERT_EQUAL_UINT8(99, batterySocPercent(8190));
+    TEST_ASSERT_EQUAL_UINT8(10, batterySocPercent(7305));
+    TEST_ASSERT_EQUAL_UINT8(66, batterySocPercent(7700));
 }
 
 static void test_soc_interpolates_between_breakpoints(void)
 {
-    TEST_ASSERT_EQUAL_UINT8(94, batterySocPercent(8300));
-    TEST_ASSERT_EQUAL_UINT8(32, batterySocPercent(7550));
+    TEST_ASSERT_EQUAL_UINT8(57, batterySocPercent(7600));
+    TEST_ASSERT_EQUAL_UINT8(42, batterySocPercent(7500));
+    TEST_ASSERT_EQUAL_UINT8(20, batterySocPercent(7400));
 }
 
 int main(int, char **)
@@ -301,7 +311,8 @@ int main(int, char **)
     RUN_TEST(test_rc_throttle_norm);
     RUN_TEST(test_soc_endpoints_and_clamping);
     RUN_TEST(test_soc_is_monotonic_across_the_band);
-    RUN_TEST(test_soc_tracks_the_lipo_knee_not_the_voltage);
+    RUN_TEST(test_soc_hits_each_measured_point);
+    RUN_TEST(test_soc_tracks_the_curve_not_the_voltage);
     RUN_TEST(test_soc_interpolates_between_breakpoints);
     return UNITY_END();
 }

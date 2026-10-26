@@ -112,6 +112,7 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.integer("info", info::schema_version);
 
   w.version("fw.version", fw::version_major, fw::version_minor, fw::version_patch);
+  w.text("fw.label", FW_STR(FW_LABEL));
   w.text("fw.git", FW_STR(FW_GIT_HASH));
   w.integer("fw.git_dirty", FW_GIT_DIRTY ? 1 : 0);
   w.text("fw.board", "teensy41");
@@ -184,6 +185,7 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("power.shunt_ohm", INA226_SENSOR::shunt_resistance, 4);
   w.fixed("power.max_current_a", INA226_SENSOR::max_curr_expected, 1);
   w.integer("power.avg_samples", ina226_avg_samples[INA226_SENSOR::avg_set]);
+  w.integer("power.poll_ms", INA226_SENSOR::poll_ms);
   w.integer("battery.cells", 2);
   w.integer("battery.empty_mv", batt_empty_mv);
   w.integer("battery.full_mv", batt_full_mv);

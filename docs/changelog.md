@@ -28,6 +28,7 @@ driver; there is no 0.8.0 firmware release.
 - `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
   `data/`.
 - `cfg::I2C::clock_hz` (100 kHz, the previous default),
+  `cfg::INA226_SENSOR::poll_ms` (1 ms, the previous rate),
   `cfg::UART::tx_buffer_bytes`, `cfg::UART::rx_read_timeout_ms`,
   `cfg::SYS_STATE::info_request`.
 
@@ -56,6 +57,9 @@ driver; there is no 0.8.0 firmware release.
   20 ms instead of the 1 s stream default.
 - The platform and every library are pinned to exact versions.
 - `scripts/pit_uart.py` defaults to `/dev/neo-pit-pcb`.
+- The charge bar curve is a 15-point measured discharge of the 5000 mAh 2S
+  battery under the car's idle load (was a 10-point rest-voltage
+  approximation that read 13 to 20 points low mid-run).
 - Speed band set to the indoor build the cars run: `min_speed_mps` 0.75 ->
   0.5 m/s, `max_speed_mps` 5.0 -> 1.0 m/s. The field build raises the ceiling
   to 4.0 m/s. Slow mode stays at 1.0 m/s.

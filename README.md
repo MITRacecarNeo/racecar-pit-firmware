@@ -277,11 +277,12 @@ With no fresh Pi command the dot matrix shows the drive-mode glyph and the LED
 strip shows a red charge bar filling from both ends.
 
 The bar reads state of charge, not volts. A 2S LiPo runs from 8.4 V (4.20
-V/cell) down to 7.0 V (3.50 V/cell), but the curve is flat between roughly 7.6
-and 8.0 V and falls off below 7.4 V, so a bar drawn linearly on voltage sits
-near full for most of a run and then empties in seconds. `battery.h` holds a
-ten-point piecewise-linear approximation of that curve; `batterySocPercent`
-returns 0-100% and the bar length follows it.
+V/cell) down to 7.0 V (3.50 V/cell), but not evenly: under the car's idle load
+half the charge is gone by 7.55 V, and the last 10% falls between 7.3 and
+7.0 V in a few minutes. `src/battery.cpp` holds a 15-point measured discharge
+curve of load voltage against charge; `batterySocPercent` interpolates it to
+0-100% and the bar length follows. Under driving load the voltage sags
+further, so the bar reads low while the car drives.
 
 ## Build and flash
 

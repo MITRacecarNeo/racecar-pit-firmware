@@ -37,7 +37,10 @@ namespace cfg
 
     namespace I2C
     {
-        constexpr uint32_t clock_hz = 100000; // Wire default; INA226 and LSM9DS1 share the bus
+        // INA226 and LSM9DS1 share the bus; both support 400 kHz. Wire blocks
+        // for each transfer, so a faster bus lets the IMU thread loop more
+        // often and take more scheduler time (TL-012).
+        constexpr uint32_t clock_hz = 100000;
     }
 
     namespace RGB_LED_WS2812B
@@ -127,6 +130,11 @@ namespace cfg
     {
         constexpr uint8_t i2c_addy = 0x40;
         constexpr uint8_t avg_set = 2; // INA226 library enum index: 2 = 16 samples
+        // 16 samples of 1.1 ms bus plus 1.1 ms shunt conversion give a new
+        // value every 35.2 ms. A slower poll leaves the bus to the IMU thread,
+        // which then takes more scheduler time: telemetry fell from 152 to
+        // 123 Hz at 10 ms (TL-013).
+        constexpr uint16_t poll_ms = 1;
         constexpr float max_curr_expected = 8.0;  // Amps
         constexpr float shunt_resistance = 0.002; // Ohms
     }

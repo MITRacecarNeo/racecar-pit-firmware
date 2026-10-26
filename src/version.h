@@ -9,7 +9,11 @@ namespace fw
     constexpr uint8_t version_patch = 0;
 }
 
-// Set by scripts/build_flags.py on firmware builds.
+// Set by scripts/build_flags.py on firmware builds. FW_LABEL is the latest
+// labeled commit on the branch ("[vM.m.p.N-pcb] ..."), or dev.
+#ifndef FW_LABEL
+#define FW_LABEL dev
+#endif
 #ifndef FW_GIT_HASH
 #define FW_GIT_HASH unknown
 #endif

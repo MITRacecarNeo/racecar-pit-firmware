@@ -8,17 +8,24 @@ namespace
         uint8_t pct;
     };
 
-    // 2S LiPo rest-voltage discharge curve, sampled at the knees.
+    // Measured 2S discharge (5000 mAh) at the INA226, under the car's idle
+    // load of about 2.4 A, so no rest-voltage correction. A full battery
+    // reads about 8.19 V under that load, hence 100% down to 8200 mV.
     constexpr SocPoint curve[] = {
         {8400, 100},
-        {8200, 88},
-        {8000, 78},
-        {7800, 64},
-        {7700, 55},
-        {7600, 40},
-        {7500, 25},
-        {7400, 13},
-        {7200, 4},
+        {8200, 100},
+        {8110, 95},
+        {8050, 90},
+        {7860, 80},
+        {7740, 70},
+        {7620, 60},
+        {7545, 50},
+        {7485, 40},
+        {7450, 30},
+        {7395, 20},
+        {7305, 10},
+        {7280, 5},
+        {7195, 2},
         {7000, 0},
     };
     constexpr uint8_t curve_n = sizeof(curve) / sizeof(curve[0]);

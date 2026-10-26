@@ -100,7 +100,7 @@ Pi falls back to configured values after a timeout (2 s in
 Payload format: ASCII, one `key=value` line per setting, each ending in
 `\n`. Keys are dotted and unique. Values are integers, fixed-point decimals
 (trailing zeros kept), or text without `=` or line breaks. Parse
-`fw.version` and `fw.git` as text even when they look numeric. Readers must
+`fw.version`, `fw.label`, and `fw.git` as text even when they look numeric. Readers must
 ignore unknown keys: new keys may be added without changing `info`; a change
 to a key's meaning or unit increments `info`.
 
@@ -120,6 +120,7 @@ values come from `config/config.h` unless noted.
 | --- | ------- | ------- |
 | `info` | 1 | payload schema version |
 | `fw.version` | 0.9.0 | firmware version, `src/version.h` |
+| `fw.label` | v0.9.0.3-pcb | latest labeled commit in the build's history; `dev` when none |
 | `fw.git` | e330426 | short commit of the build; `unknown` outside git |
 | `fw.git_dirty` | 0 | 1 when built with uncommitted tracked changes |
 | `fw.board` | teensy41 | target board |
@@ -159,6 +160,7 @@ values come from `config/config.h` unless noted.
 | `power.sensor` | INA226 | power sensor |
 | `power.shunt_ohm`, `power.max_current_a` | 0.0020, 8.0 | shunt and current range |
 | `power.avg_samples` | 16 | INA226 hardware averaging |
+| `power.poll_ms` | 1 | INA226 read period |
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
 | `i2c.clock_hz` | 100000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |

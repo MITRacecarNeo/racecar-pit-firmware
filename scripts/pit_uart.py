@@ -38,7 +38,7 @@ SYS_INFO_REQUEST = 0x20
 INFO_CHUNK_BYTES = 128
 INFO_TIMEOUT_SEC = 2.0
 # Info values kept as text even when they look numeric.
-INFO_STRING_KEYS = frozenset({"fw.version", "fw.git"})
+INFO_STRING_KEYS = frozenset({"fw.version", "fw.label", "fw.git"})
 
 # '<' little endian, matching the packed structs on the Teensy.
 _T = {

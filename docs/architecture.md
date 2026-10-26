@@ -192,9 +192,9 @@ a protocol break that has to land on both sides together.
   neutral. The RC transmitter overrides the Pi whenever a stick leaves its
   neutral band and a plausible pulse is present, so a dead receiver holds
   neutral instead of reading as full reverse.
-- The idle LED bar reads state of charge from the 2S curve in `battery.h`, not
-  raw volts. A linear voltage bar sat near full through the flat part of the
-  discharge curve and then emptied within seconds.
+- The idle LED bar reads state of charge from a measured 2S discharge curve
+  (`src/battery.cpp`, load voltage at idle current), not raw volts. It reads
+  low under driving load, when the voltage sags further.
 - Current is packed as mA in a `uint16`, covering 0 to 65.5 A against an 8 A
   shunt setting; negative current clamps to 0.
 - Telemetry timestamps are `micros()` in an `int32`, so they wrap every ~35.8

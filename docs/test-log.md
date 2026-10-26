@@ -4,6 +4,129 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-013 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, transmitter off. Firmware
+`00f6bf2` plus the staged tree: `fw.label`, the measured 15-point charge bar
+curve, and the I2C knob back at 100 kHz. Battery 7.60 to 7.61 V.
+
+### Hypothesis
+At 100 kHz telemetry returns to the 152 Hz of TL-011.
+
+### Method
+`scripts/telemetry_probe.py 10 --runs 3` (checks that `pit_node` is the only
+publisher) with the INA226 read every 10 ms, then the same with every 1 ms.
+Info reply against a host build of the same tree.
+
+### Parameters
+| Name | 100 kHz, INA226 10 ms | 100 kHz, INA226 1 ms | Unit |
+| ---- | --------------------- | -------------------- | ---- |
+| Teensy-stamped rate (runs) | 125.6, 122.4, 124.1 | 152.3, 151.8, 152.8 | Hz |
+| Messages received at the Pi (runs) | 125.9, 118.0, 123.2 | 152.6, 145.4, 132.6 | Hz |
+| Stamp gap median | 8.25 to 8.29 | 6.28 to 6.45 | ms |
+| Stamp gap p99 / max | 10.1 / 14.8 | 10.2 to 11.8 / 13.2 to 15.2 | ms |
+
+### Observations
+- The bus clock had no effect on its own: 100 kHz with the 10 ms INA226 read
+  ran at the TL-012 rate.
+- The first info request failed with a pyserial "multiple access on port"
+  error, since `pit_node` reads the same port; the retry matched the host
+  build (74 keys, `fw.label=dev`, `i2c.clock_hz=100000`).
+- In two of three 1 ms runs the Pi received fewer messages than the Teensy
+  stamps show it sent (145.4 and 132.6 against about 152 Hz).
+- Accel, gyro, mag, battery and RC readings normal in every run.
+
+### Conclusion
+The INA226 poll rate set the telemetry rate: reading the battery less often
+leaves the bus to `ReadIMUStates`, which then busy-waits through more
+scheduler slices. Kept at 1 ms (the previous behavior) until the scheduler
+change. The Pi-side message loss needs a count in the measurement suite.
+
+---
+
+## TL-012 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop service running, after a reboot. Firmware
+`00f6bf2` plus the staged I2C change: `cfg::I2C::clock_hz` 100000 -> 400000,
+INA226 read every 10 ms instead of every 1 ms. Battery 8.05 V.
+
+### Hypothesis
+At 100 kHz one LSM9DS1 read holds the bus about 3 ms and starves `UARTTx`;
+at 400 kHz telemetry rises toward 200 Hz.
+
+### Method
+Telemetry probe (best-effort subscriber, 10 s, one publisher checked each run)
+once on the 100 kHz build after the reboot and three times after the flash.
+Info reply read with `scripts/pit_uart.py --info`.
+
+### Parameters
+| Name | 100 kHz | 400 kHz | Unit |
+| ---- | ------- | ------- | ---- |
+| Telemetry rate (runs) | 151.9; earlier 152.2, 153.6, 153.1 | 127.1, 132.5, 91.8 | Hz |
+| Stamp gap median | 6.25 | 8.20 to 8.30 | ms |
+| Stamp gap p95 | 10.09 | 8.98 to 9.24 | ms |
+| Stamp gap max | 15.20 | 14.48 to 14.82 | ms |
+| Distinct battery voltages | 20.2 | 12.6 to 16.9 | per s |
+
+### Observations
+- The upload failed on the first write and succeeded on the retry (13.4 s).
+- Info reply: `i2c.clock_hz=400000`, `power.poll_ms=10`, `status.imu=ok`,
+  `status.power=ok`. Accel (-0.02, -0.15, +10.00 m/s^2), gyro, mag and
+  battery voltage read normally.
+- The third run counted 917 frames in 10 s against a median gap of 8.3 ms
+  (about 120 Hz).
+- TeensyThreads `delay()` loops on `yield()`, and each thread holds a 1 ms
+  slice (10 ticks of 100 us). A thread busy-waiting on I2C keeps its whole
+  slice, so `UARTTx` runs once per round of all eight contexts.
+
+### Conclusion
+Not supported. Telemetry fell by about 20% and the gaps moved from a 5/10 ms
+mix to a steady 8.2 ms. The rate is bounded by round-robin wake-up of
+`UARTTx`, not by bus time. This run changed the bus clock and the INA226
+poll together; TL-013 separates them: the poll change caused the drop.
+Next action: send telemetry independent of the thread rounds.
+
+---
+
+## TL-011 - 2026-10-25
+
+### Setup
+Reference car on a block, wheels off the ground, teleop service running.
+Firmware built from the clean tree at `00f6bf2`. Battery 7.98 V.
+
+### Hypothesis
+A build from a committed tree reports its commit, clean, and runs as TL-009.
+
+### Method
+`pio run -t upload`; on failure, the same command again. Then
+`python3 scripts/pit_uart.py --info` (teleop still running, as TL-010), a diff
+against a host build of `writeFirmwareInfo` with `FW_GIT_HASH=00f6bf2`, and a
+10 s telemetry probe.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Telemetry rate | 153.3 | Hz |
+| Stamp gap median / p95 / max | 6.23 / 10.09 / 15.07 | ms |
+| Info keys | 72 | - |
+
+### Observations
+- The first upload rebooted the Teensy into HalfKay, then failed with "error
+  writing to Teensy" after 259.7 s (build included). The retry, started with
+  the Teensy already in HalfKay, programmed in 17.2 s. The same pattern
+  occurred in TL-009.
+- Info reply: `fw.git=00f6bf2`, `fw.git_dirty=0`, byte for byte equal to the
+  host build.
+- Telemetry topics, accel, gyro, mag and battery as in TL-009.
+
+### Conclusion
+Supported. Uploads from running firmware fail on the first write on this car;
+rerunning `pio run -t upload` once completes them.
+
+---
+
 ## TL-010 - 2026-10-25
 
 ### Setup
