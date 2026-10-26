@@ -23,8 +23,8 @@ namespace cfg
         // Holds one telemetry frame plus one info chunk, so a slot never
         // blocks the transmit thread.
         constexpr size_t tx_buffer_bytes = 512;
-        // A command body takes 5.1 ms on the wire; a read stuck longer than
-        // this is a broken frame.
+        // A command body takes 5.1 ms on the wire; a frame still incomplete
+        // this long after its magic is dropped.
         constexpr uint32_t rx_read_timeout_ms = 20;
     }
 

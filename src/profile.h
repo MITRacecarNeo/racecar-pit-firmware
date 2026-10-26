@@ -30,8 +30,9 @@ namespace prof
         power_bus_wait,  // ReadCurrAndVolt waiting for I2CMutex
         led_show,        // FastLED.show
         tx_send,         // telemetry build and Serial1.write
-        rx_frame,        // command frame read and CRC
-        cmd_to_pwm,      // command frame accepted to the PWM write that used it
+        rx_frame,        // complete command frame: CRC and apply
+        cmd_to_pwm,      // command frame accepted to the PWM write that used it;
+                         // time in the serial buffer is bounded by the rx_loop period
         irq_late,        // lateness of a 10 kHz top-priority timer interrupt
         section_count
     };

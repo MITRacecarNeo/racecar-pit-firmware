@@ -54,7 +54,8 @@ TARGETS = [
 
 @dataclass
 class Summary:
-    seconds: int = 0
+    windows: int = 0
+    seconds: float = 0.0
     periods: dict[str, dict[str, float]] = field(default_factory=dict)
     sections: dict[str, dict[str, float]] = field(default_factory=dict)
     counters: dict[str, dict[str, float]] = field(default_factory=dict)
@@ -82,6 +83,22 @@ def parse_line(line: str) -> dict[str, Any] | None:
     return {"t_ms": t_ms, "kind": kind, "name": name, **dict(zip(keys, nums, strict=True))}
 
 
+def covered_seconds(report_times_ms: list[int]) -> float:
+    """Time the reports cover, in seconds.
+
+    Each report closes a window that started at the previous report. Windows
+    run slightly over 1 s (the reporter checks every 25 ms), so rates come from
+    the report times rather than the window count. The first window's start is
+    unknown; it is taken as the mean window length.
+    """
+    if not report_times_ms:
+        return 0.0
+    if len(report_times_ms) == 1:
+        return 1.0
+    span = report_times_ms[-1] - report_times_ms[0]
+    return span * len(report_times_ms) / (len(report_times_ms) - 1) / 1000.0
+
+
 def summarize(records: Iterable[dict[str, Any]]) -> Summary:
     """Combine per-second records into one summary per stat.
 
@@ -93,8 +110,8 @@ def summarize(records: Iterable[dict[str, Any]]) -> Summary:
     for r in records:
         by_key[(r["kind"], r["name"])].append(r)
         windows.add(r["t_ms"])
-    out = Summary(seconds=len(windows))
-    seconds = max(1, out.seconds)
+    out = Summary(windows=len(windows), seconds=covered_seconds(sorted(windows)))
+    seconds = out.seconds or 1.0
     for (kind, name), rows in sorted(by_key.items()):
         if kind == "counter":
             values = [r["value"] for r in rows]
@@ -132,7 +149,7 @@ def check_targets(summary: Summary) -> list[tuple[Target, float | None, bool | N
 
 
 def format_summary(summary: Summary, pi_rate_hz: float | None = None) -> str:
-    lines = [f"{summary.seconds} s of reports"]
+    lines = [f"{summary.windows} reports over {summary.seconds:.1f} s"]
     lines.append(
         f"{'period':14s} {'rate Hz':>8s} {'mean us':>8s} {'p50':>6s} {'p99':>6s} {'max':>6s}"
     )

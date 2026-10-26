@@ -40,9 +40,24 @@ def test_parse_line_ignores_other_output(line):
     assert pc.parse_line(line) is None
 
 
+def test_covered_seconds_uses_report_times():
+    assert pc.covered_seconds([]) == 0.0
+    assert pc.covered_seconds([5000]) == 1.0
+    assert pc.covered_seconds([1000, 2000]) == pytest.approx(2.0)
+    assert pc.covered_seconds([1000, 2025, 3050, 4075]) == pytest.approx(4.1)
+
+
+def test_rate_is_not_inflated_by_long_windows():
+    lines = [f"P,{t},period,tx_slot,205,1000000,5100,5050,5100" for t in (1000, 2025, 3050)]
+    s = pc.summarize(pc.parse_line(line) for line in lines)
+    assert s.windows == 3
+    assert s.periods["tx_slot"]["rate_hz"] == pytest.approx(200.0)
+
+
 def test_summarize_combines_seconds():
     s = pc.summarize(records())
-    assert s.seconds == 2
+    assert s.windows == 2
+    assert s.seconds == pytest.approx(2.0)
     tx = s.periods["tx_slot"]
     assert tx["rate_hz"] == pytest.approx(176.0)
     assert tx["mean_us"] == pytest.approx(1995000 / 352)

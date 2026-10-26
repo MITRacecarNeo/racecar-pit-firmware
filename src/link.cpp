@@ -4,6 +4,7 @@
 #include <TeensyThreads.h>
 
 #include "config.h"
+#include "command_framer.h"
 #include "crc16.h"
 #include "info.h"
 #include "packets.h"
@@ -141,46 +142,39 @@ namespace
 
 void UARTRx()
 {
-  static RxPacket rx;
-  uint8_t window[4] = {0, 0, 0, 0};
-
-  // magic is little-endian on the Teensy, so its bytes match the wire.
-  const uint32_t magic = wire::command_magic;
-  const uint16_t magic_crc = crc16_ccitt((const uint8_t *)&magic, sizeof(magic));
+  static CommandFramer framer;
+  uint32_t frame_start_ms = 0;
 
   while (true)
   {
     PROF_PERIOD(rx_loop);
-    while (Serial1.available())
+    // Take only what has arrived; a frame spans several turns of this thread.
+    while (Serial1.available() > 0)
     {
-      // Slide a 4-byte window over the stream until the magic word lands.
-      memmove(window, window + 1, sizeof(window) - 1);
-      window[3] = Serial1.read();
-
-      uint32_t seen;
-      memcpy(&seen, window, sizeof(seen));
-      if (seen != magic)
+      const bool was_in_frame = framer.inFrame();
+      const bool complete = framer.push((uint8_t)Serial1.read());
+      if (!was_in_frame && framer.inFrame())
+        frame_start_ms = millis();
+      if (!complete)
         continue;
 
       PROF_START(t_rx);
-      if (Serial1.readBytes((char *)&rx, sizeof(rx)) != sizeof(rx))
-      {
-        PROF_COUNT(rx_short);
-        continue;
-      }
-
-      const uint16_t crc = crc16_ccitt((const uint8_t *)&rx, sizeof(RxPacket) - 2, magic_crc);
-      if (cfg::UART::verify_rx_crc && crc != rx.Checksum)
+      if (cfg::UART::verify_rx_crc && !framer.crcOk())
       {
         PROF_COUNT(rx_crc_fail);
         continue;
       }
-
-      applyCommand(rx);
+      applyCommand(framer.frame());
       lastRxTime = micros();
       PROF_SECTION(rx_frame, t_rx);
       PROF_COUNT(rx_frames);
       PROF_CMD_ACCEPTED();
+    }
+
+    if (framer.inFrame() && millis() - frame_start_ms > cfg::UART::rx_read_timeout_ms)
+    {
+      framer.reset();
+      PROF_COUNT(rx_short);
     }
     threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }

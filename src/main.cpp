@@ -23,7 +23,6 @@ void setup()
   Serial1.addMemoryForRead(serial1_rx_buf, sizeof(serial1_rx_buf));
   static uint8_t serial1_tx_buf[cfg::UART::tx_buffer_bytes];
   Serial1.addMemoryForWrite(serial1_tx_buf, sizeof(serial1_tx_buf));
-  Serial1.setTimeout(cfg::UART::rx_read_timeout_ms);
   SPI.begin();
 
   initHallEncoder();

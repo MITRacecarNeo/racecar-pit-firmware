@@ -4,6 +4,49 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-015 - 2026-10-25
+
+### Setup
+As TL-014; profiling build of `26d0fd4` plus `UARTRx` on `CommandFramer`
+(frames built from available bytes, no `readBytes`). I2C at 400 kHz.
+
+### Hypothesis
+Without the `readBytes` wait, every thread gets more turns and telemetry
+holds 200 Hz.
+
+### Method
+`scripts/profile_capture.py 60 --probe`; info reply through the new receive
+path.
+
+### Parameters
+| Name | TL-014, 400 kHz | Non-blocking receive | Unit |
+| ---- | --------------- | -------------------- | ---- |
+| `drive_loop` rate | 620.2 | 864.7 | Hz |
+| `drive_loop` period mean / p99 / max | 1.63 / 6.7 / 7.58 | 1.16 / 2.3 / 2.72 | ms |
+| `tx_slot` rate | 194.3 | 200.0 | Hz |
+| `tx_slot` p99 / max | 11.10 / 11.37 | 6.45 / 6.48 | ms |
+| `rx_frame` mean / max | 4213 / 5108 | 8.2 / 9 | us |
+| `cmd_to_pwm` mean / max | 26 / 425 | 10 / 428 | us |
+| Distinct IMU samples | 391 | 503 | per s |
+| Pi-side loss | none measurable | 0.7 | % |
+
+### Observations
+- 60.4 command frames/s accepted, 0 CRC failures, 0 stalled frames.
+- Info reply over the new path: `fw.label=v0.9.0.4-pcb`, `i2c.clock_hz=400000`,
+  both sensors `ok`.
+- The capture first printed 201.4 Hz telemetry and 870.7 Hz drive loop: it
+  divided by the window count while the windows ran slightly over 1 s (60
+  reports over 60.41 s). Rates now come from the report timestamps; the
+  figures above are recomputed that way. Earlier entries are overstated by
+  under 1%.
+
+### Conclusion
+Supported. Drive loop 865 Hz with a 2.7 ms worst period; telemetry at 200 Hz
+with gaps under 6.5 ms. Remaining gap to the targets is round-robin
+scheduling (drive max 2.7 ms against 1.5 ms).
+
+---
+
 ## TL-014 - 2026-10-25
 
 ### Setup
