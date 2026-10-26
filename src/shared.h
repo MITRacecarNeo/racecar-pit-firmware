@@ -3,6 +3,7 @@
 #include <TeensyThreads.h>
 
 #include "config.h"
+#include "info.h"
 #include "seqlock.h"
 
 // State shared between threads and the drive interrupt. Each block has one
@@ -46,16 +47,25 @@ T readShared(const Seqlock<T> &lock)
 }
 
 // INA226, written by ReadCurrAndVolt (sensors.cpp).
-extern Threads::Mutex PowerMutex;
-extern float power_amps;
-extern float power_volts;
+struct PowerSample
+{
+  float amps;
+  float volts;
+};
+extern Seqlock<PowerSample> power_sample;
 
 // LSM9DS1, written by ReadIMUStates (sensors.cpp).
-extern Threads::Mutex ImuMutex;
-extern float imuVals[9]; // accel xyz m/s^2, gyro xyz rad/s, mag xyz uT
+struct ImuSample
+{
+  float v[9]; // accel xyz m/s^2, gyro xyz rad/s, mag xyz uT
+};
+extern Seqlock<ImuSample> imu_sample;
 
 // Both sensors share the bus.
 extern Threads::Mutex I2CMutex;
+
+// LSM9DS1 registers, written once by ReadIMUStates before imu_ok is set.
+extern Lsm9ds1Registers imu_regs;
 
 // Sensor presence, written by the sensor threads once begin() succeeds.
 extern volatile bool imu_ok;

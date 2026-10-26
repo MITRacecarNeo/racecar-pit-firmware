@@ -54,6 +54,14 @@ def test_rate_is_not_inflated_by_long_windows():
     assert s.periods["tx_slot"]["rate_hz"] == pytest.approx(200.0)
 
 
+def test_a_stat_missing_from_one_report_keeps_its_rate():
+    lines = [f"P,{t},period,drive_loop,1000,1000000,1000,1050,1050" for t in (1000, 2000, 3000)]
+    lines += [f"P,{t},period,tx_slot,200,1000000,5000,5050,5050" for t in (2000, 3000)]
+    s = pc.summarize(pc.parse_line(line) for line in lines)
+    assert s.periods["drive_loop"]["rate_hz"] == pytest.approx(1000.0)
+    assert s.periods["tx_slot"]["rate_hz"] == pytest.approx(200.0)
+
+
 def test_summarize_combines_seconds():
     s = pc.summarize(records())
     assert s.windows == 2

@@ -111,16 +111,21 @@ def summarize(records: Iterable[dict[str, Any]]) -> Summary:
         by_key[(r["kind"], r["name"])].append(r)
         windows.add(r["t_ms"])
     out = Summary(windows=len(windows), seconds=covered_seconds(sorted(windows)))
-    seconds = out.seconds or 1.0
+    # Seconds per report window; a stat missing from some reports (lines
+    # dropped while the port opened) is rated over the windows it has.
+    per_window = (out.seconds / out.windows) if out.windows else 1.0
     for (kind, name), rows in sorted(by_key.items()):
         if kind == "counter":
             values = [r["value"] for r in rows]
-            out.counters[name] = {"per_s": sum(values) / seconds, "max": max(values)}
+            out.counters[name] = {
+                "per_s": sum(values) / (len(rows) * per_window),
+                "max": max(values),
+            }
             continue
         n = sum(r["n"] for r in rows)
         stat = {
             "n": n,
-            "rate_hz": n / seconds,
+            "rate_hz": n / (len(rows) * per_window),
             "mean_us": sum(r["sum_us"] for r in rows) / n if n else 0.0,
             "max_us": max(r["max_us"] for r in rows),
         }

@@ -13,7 +13,10 @@ static char payload[info::payload_max_bytes];
 
 static size_t buildPayload(bool imu_ok = true, bool power_ok = true)
 {
-    const InfoStatus status = {imu_ok, power_ok, "watchdog", 0x80, true};
+    // Registers as the shipped config leaves them: gyro 952 Hz, mag 155 Hz
+    // fast mode, 8 gauss, continuous.
+    const Lsm9ds1Registers regs = {true, 0xC8, 0x78, 0x62, 0x20, 0x00};
+    const InfoStatus status = {imu_ok, power_ok, "watchdog", 0x80, true, regs};
     return writeFirmwareInfo(status, payload, sizeof(payload));
 }
 
@@ -145,6 +148,11 @@ static void test_payload_reports_sensor_status(void)
     TEST_ASSERT_EQUAL_STRING("watchdog", valueOf("status.last_reset"));
     TEST_ASSERT_EQUAL_STRING("128", valueOf("status.reset_flags"));
     TEST_ASSERT_EQUAL_STRING("100", valueOf("watchdog.timeout_ms"));
+    TEST_ASSERT_EQUAL_STRING("952", valueOf("imu.gyro_odr_hz"));
+    TEST_ASSERT_EQUAL_STRING("952", valueOf("imu.accel_odr_hz"));
+    TEST_ASSERT_EQUAL_STRING("155.000", valueOf("imu.mag_odr_hz"));
+    TEST_ASSERT_EQUAL_STRING("8", valueOf("imu.mag_range_read_gauss"));
+    TEST_ASSERT_EQUAL_STRING("200", valueOf("imu.reg_ctrl1_g"));
 }
 
 static void test_payload_keys_are_unique(void)
@@ -168,6 +176,40 @@ static void test_payload_keys_are_unique(void)
         count++;
         line = end + 1;
     }
+}
+
+// ----------------------------- LSM9DS1 ---------------------------- //
+
+static void test_lsm9ds1_gyro_and_accel_rates(void)
+{
+    Lsm9ds1Registers r = {true, 0x00, 0x60, 0, 0, 0};
+    TEST_ASSERT_EQUAL_UINT16(0, lsm9ds1GyroOdrHz(r));
+    TEST_ASSERT_EQUAL_UINT16(119, lsm9ds1AccelOdrHz(r)); // gyro off: ODR_XL counts
+    r.ctrl1_g = 0x80;                                     // gyro 238 Hz
+    TEST_ASSERT_EQUAL_UINT16(238, lsm9ds1GyroOdrHz(r));
+    TEST_ASSERT_EQUAL_UINT16(238, lsm9ds1AccelOdrHz(r)); // gyro on: follows the gyro
+}
+
+static void test_lsm9ds1_mag_rate_and_range(void)
+{
+    Lsm9ds1Registers r = {true, 0, 0, 0x10, 0x00, 0x00}; // DO = 100: 10 Hz, 4 gauss
+    TEST_ASSERT_EQUAL_FLOAT(10.0f, lsm9ds1MagOdrHz(r));
+    TEST_ASSERT_EQUAL_UINT8(4, lsm9ds1MagRangeGauss(r));
+    r.ctrl1_m = 0x02; // FAST_ODR, low-power mode
+    TEST_ASSERT_EQUAL_FLOAT(1000.0f, lsm9ds1MagOdrHz(r));
+    r.ctrl2_m = 0x60;
+    TEST_ASSERT_EQUAL_UINT8(16, lsm9ds1MagRangeGauss(r));
+    r.ctrl3_m = 0x03; // power-down
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, lsm9ds1MagOdrHz(r));
+}
+
+static void test_payload_without_imu_reports_zero_rates(void)
+{
+    const InfoStatus status = {false, true, "reset", 1, false, Lsm9ds1Registers{}};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("0", valueOf("imu.gyro_odr_hz"));
+    TEST_ASSERT_EQUAL_STRING("0.000", valueOf("imu.mag_odr_hz"));
+    TEST_ASSERT_EQUAL_STRING("missing", valueOf("status.imu"));
 }
 
 // ------------------------------ chunks ---------------------------- //
@@ -254,6 +296,9 @@ int main(int, char **)
     RUN_TEST(test_payload_reports_the_compiled_config);
     RUN_TEST(test_payload_reports_sensor_status);
     RUN_TEST(test_payload_keys_are_unique);
+    RUN_TEST(test_lsm9ds1_gyro_and_accel_rates);
+    RUN_TEST(test_lsm9ds1_mag_rate_and_range);
+    RUN_TEST(test_payload_without_imu_reports_zero_rates);
     RUN_TEST(test_chunk_count);
     RUN_TEST(test_packet_matches_the_reference_bytes);
     RUN_TEST(test_chunks_reassemble_to_the_payload);

@@ -21,6 +21,18 @@ namespace
 
   using Lsm = Adafruit_LSM9DS1;
 
+  // One register over Wire; the caller holds I2CMutex.
+  uint8_t readRegister(uint8_t address, uint8_t reg)
+  {
+    Wire.beginTransmission(address);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0)
+      return 0;
+    if (Wire.requestFrom(address, (uint8_t)1) != 1)
+      return 0;
+    return (uint8_t)Wire.read();
+  }
+
   constexpr Lsm::lsm9ds1AccelRange_t accelRange(uint8_t g)
   {
     return g == 2 ? Lsm::LSM9DS1_ACCELRANGE_2G
@@ -91,10 +103,7 @@ void ReadCurrAndVolt()
     I2CMutex.unlock();
     PROF_COUNT(power_reads);
 
-    PowerMutex.lock();
-    power_amps = amps;
-    power_volts = volts;
-    PowerMutex.unlock();
+    power_sample.write({amps, volts});
 
     threads.delay(cfg::INA226_SENSOR::poll_ms);
   }
@@ -116,6 +125,12 @@ void ReadIMUStates()
       // Adafruit BusIO's begin() calls Wire.begin(), which resets the bus to
       // 100 kHz; apply the configured clock again.
       Wire.setClock(cfg::I2C::clock_hz);
+      imu_regs.ctrl1_g = readRegister(LSM9DS1_ADDRESS_ACCELGYRO, 0x10);
+      imu_regs.ctrl6_xl = readRegister(LSM9DS1_ADDRESS_ACCELGYRO, 0x20);
+      imu_regs.ctrl1_m = readRegister(LSM9DS1_ADDRESS_MAG, 0x20);
+      imu_regs.ctrl2_m = readRegister(LSM9DS1_ADDRESS_MAG, 0x21);
+      imu_regs.ctrl3_m = readRegister(LSM9DS1_ADDRESS_MAG, 0x22);
+      imu_regs.read = true;
     }
     I2CMutex.unlock();
     if (found)
@@ -137,12 +152,16 @@ void ReadIMUStates()
       next_us = micros() + cfg::LSM9DS1_IMU::read_period_us;
 
     PROF_PERIOD(imu_loop);
-    sensors_event_t a, m, g, temp;
+    sensors_event_t a, m, g;
     PROF_START(t_wait);
     I2CMutex.lock();
     PROF_SECTION(imu_bus_wait, t_wait);
     PROF_START(t_read);
-    lsm.getEvent(&a, &m, &g, &temp);
+    // One transfer each. getEvent(a, m, g, temp) also reads the temperature
+    // and reads the magnetometer twice.
+    lsm.getAccel().getEvent(&a);
+    lsm.getGyro().getEvent(&g);
+    lsm.getMag().getEvent(&m);
     PROF_SECTION(imu_read, t_read);
     I2CMutex.unlock();
 #ifdef RCN_PROFILE
@@ -156,17 +175,9 @@ void ReadIMUStates()
     }
 #endif
 
-    ImuMutex.lock();
-    imuVals[0] = a.acceleration.x;
-    imuVals[1] = a.acceleration.y;
-    imuVals[2] = a.acceleration.z;
-    imuVals[3] = g.gyro.x;
-    imuVals[4] = g.gyro.y;
-    imuVals[5] = g.gyro.z;
-    imuVals[6] = m.magnetic.x;
-    imuVals[7] = m.magnetic.y;
-    imuVals[8] = m.magnetic.z;
-    ImuMutex.unlock();
+    imu_sample.write({{a.acceleration.x, a.acceleration.y, a.acceleration.z,
+                       g.gyro.x, g.gyro.y, g.gyro.z,
+                       m.magnetic.x, m.magnetic.y, m.magnetic.z}});
   }
 }
 

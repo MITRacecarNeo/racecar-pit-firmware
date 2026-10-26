@@ -96,6 +96,41 @@ void InfoWriter::fixed(const char *key, float value, uint8_t decimals)
   putChar('\n');
 }
 
+uint16_t lsm9ds1GyroOdrHz(const Lsm9ds1Registers &r)
+{
+  static const uint16_t odr[8] = {0, 15, 60, 119, 238, 476, 952, 0};
+  return odr[(r.ctrl1_g >> 5) & 0x07];
+}
+
+uint16_t lsm9ds1AccelOdrHz(const Lsm9ds1Registers &r)
+{
+  const uint16_t gyro = lsm9ds1GyroOdrHz(r);
+  if (gyro != 0)
+    return gyro;
+  static const uint16_t odr[8] = {0, 10, 50, 119, 238, 476, 952, 0};
+  return odr[(r.ctrl6_xl >> 5) & 0x07];
+}
+
+float lsm9ds1MagOdrHz(const Lsm9ds1Registers &r)
+{
+  if ((r.ctrl3_m & 0x03) != 0)
+    return 0.0f; // not in continuous mode
+  if (r.ctrl1_m & 0x02)
+  {
+    // FAST_ODR: the rate follows the X/Y operating mode.
+    static const float fast[4] = {1000.0f, 560.0f, 300.0f, 155.0f};
+    return fast[(r.ctrl1_m >> 5) & 0x03];
+  }
+  static const float odr[8] = {0.625f, 1.25f, 2.5f, 5.0f, 10.0f, 20.0f, 40.0f, 80.0f};
+  return odr[(r.ctrl1_m >> 2) & 0x07];
+}
+
+uint8_t lsm9ds1MagRangeGauss(const Lsm9ds1Registers &r)
+{
+  static const uint8_t fs[4] = {4, 8, 12, 16};
+  return fs[(r.ctrl2_m >> 5) & 0x03];
+}
+
 namespace
 {
   // INA226 library averaging enum index to sample count.
@@ -179,9 +214,19 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
 
   w.text("imu.model", "LSM9DS1");
   w.integer("imu.accel_range_g", LSM9DS1_IMU::accel_range_g);
-  w.integer("imu.accel_rate_hz", LSM9DS1_IMU::accel_rate_hz);
   w.integer("imu.gyro_range_dps", LSM9DS1_IMU::gyro_range_dps);
   w.integer("imu.mag_range_gauss", LSM9DS1_IMU::mag_range_gauss);
+  // Read back from the chip; 0 until the IMU answers.
+  const Lsm9ds1Registers &r = status.imu_regs;
+  w.integer("imu.gyro_odr_hz", r.read ? lsm9ds1GyroOdrHz(r) : 0);
+  w.integer("imu.accel_odr_hz", r.read ? lsm9ds1AccelOdrHz(r) : 0);
+  w.fixed("imu.mag_odr_hz", r.read ? lsm9ds1MagOdrHz(r) : 0.0f, 3);
+  w.integer("imu.mag_range_read_gauss", r.read ? lsm9ds1MagRangeGauss(r) : 0);
+  w.integer("imu.reg_ctrl1_g", r.ctrl1_g);
+  w.integer("imu.reg_ctrl6_xl", r.ctrl6_xl);
+  w.integer("imu.reg_ctrl1_m", r.ctrl1_m);
+  w.integer("imu.reg_ctrl2_m", r.ctrl2_m);
+  w.integer("imu.reg_ctrl3_m", r.ctrl3_m);
   w.integer("imu.read_hz", (int32_t)(1000000UL / LSM9DS1_IMU::read_period_us));
   w.text("imu.accel_unit", "m/s2");
   w.text("imu.gyro_unit", "rad/s");

@@ -87,6 +87,18 @@ driver; there is no 0.8.0 firmware release.
   (`src/command_framer.*`) instead of waiting in `readBytes` for a whole
   frame.
 - The `serial_plot` trace prints from `loop()`.
+- Telemetry is sent from a 200 Hz IntervalTimer interrupt instead of a
+  thread: every gap between frames is 5.00 ms. A thread (`InfoBuilder`)
+  builds the info payload into one of two buffers (`src/info_buffers.h`) and
+  the interrupt sends chunks from the other. The IMU and INA226 readings are
+  shared through sequence counters in place of `ImuMutex` and `PowerMutex`.
+- The LSM9DS1 is read as three transfers (accel, gyro, mag) in place of
+  `getEvent()`, which also read the temperature and read the magnetometer
+  twice: 715 us per read instead of 1090 us.
+- Info keys `imu.gyro_odr_hz`, `imu.accel_odr_hz`, `imu.mag_odr_hz`,
+  `imu.mag_range_read_gauss`, and the raw `imu.reg_*` registers, read back
+  from the chip, replace `imu.accel_rate_hz`, which reported the configured
+  accel rate the chip ignores while the gyro runs.
 - swA slow mode is now the low pulse (lever up on the FS-i6, its start
   position); high is fast. A receiver with no signal reads fast. swD is
   unchanged: high (lever down) is manual override, low or no signal leaves the

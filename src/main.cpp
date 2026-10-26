@@ -29,12 +29,13 @@ void setup()
 
   initHallEncoder();
   startDriveControl();
+  startTelemetry();
 
   threads.addThread(RxReceive);
   threads.addThread(ReadCurrAndVolt);
   threads.addThread(ReadIMUStates);
   threads.addThread(DotMatrix);
-  threads.addThread(UARTTx);
+  threads.addThread(InfoBuilder);
   threads.addThread(UARTRx);
   PROF_BEGIN();
 
@@ -44,8 +45,8 @@ void setup()
 void loop()
 {
 #ifdef RCN_WDT_TEST
-  // Test build: a character on USB serial stops one context (t, r, p, i, c,
-  // m, d for the drive tick, l for loop itself).
+  // Test build: a character on USB serial stops one context (t telemetry
+  // tick, b info builder, r, p, i, c, m, d for the drive tick, l for loop).
   if (Serial.available() > 0)
     wdt::test_hang = (char)Serial.read();
   while (wdt::test_hang == 'l')

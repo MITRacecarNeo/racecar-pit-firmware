@@ -178,12 +178,12 @@ Polarity is corrected on the Pi side (`pit.yaml` `speed_sign` /
 
 ## Telemetry
 
-`UARTTx` assembles each frame at send time from the latest LSM9DS1 sample
-(`getEvent(accel, mag, gyro)`: m/s^2, rad/s, uT), the INA226 bus voltage (mV)
+A 200 Hz timer interrupt assembles each frame at send time from the latest
+LSM9DS1 sample (accel m/s^2, gyro rad/s, mag uT), the INA226 bus voltage (mV)
 and current (mA), the eight FlySky RC channels (raw pulse widths, us), and a
 microsecond timestamp. Current is packed as mA rather than truncated amps so
 sub-amp resolution survives the `uint16`. The encoder field carries signed
-ground speed in m/s, not RPM, as computed by the actuation thread: it averages
+ground speed in m/s, not RPM, as computed by the drive tick: it averages
 the last five hall intervals, zeroes on a hall-transition timeout
 (`stop_timeout_us`, 30 ms) instead of reporting a ghost speed from a stale
 interval, and applies the two gear ratios and the wheel circumference.

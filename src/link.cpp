@@ -1,12 +1,14 @@
 #include "link.h"
 
 #include <Arduino.h>
+#include <IntervalTimer.h>
 #include <TeensyThreads.h>
 
 #include "config.h"
 #include "command_framer.h"
 #include "crc16.h"
 #include "info.h"
+#include "info_buffers.h"
 #include "packets.h"
 #include "profile.h"
 #include "watchdog.h"
@@ -14,117 +16,122 @@
 
 namespace
 {
-  void fillTelemetry(TXPacket &pkt)
+  IntervalTimer telemetry_timer;
+  TXPacket pkt = {};
+
+  // Last values that read cleanly, used when a write is in progress.
+  RcChannels rc_last = {};
+  ImuSample imu_last = {};
+  PowerSample power_last = {0.0f, 0.0f};
+
+  InfoBuffers<info::payload_max_bytes> info_buffers;
+  const InfoBuffers<info::payload_max_bytes>::Payload *info_sending = nullptr;
+  uint16_t info_next = 0;
+  uint8_t info_packet[info_packet_max_bytes];
+
+  void fillTelemetry()
   {
-    const RcChannels rc = readShared(rc_channels);
-    memcpy(pkt.RxReceiver, rc.us, sizeof(pkt.RxReceiver));
-
-    ImuMutex.lock();
-    memcpy(pkt.IMU, imuVals, sizeof(pkt.IMU));
-    ImuMutex.unlock();
-
-    PowerMutex.lock();
-    const float amps = power_amps;
-    const float volts = power_volts;
-    PowerMutex.unlock();
-
-    pkt.VoltAndCurr[0] = (uint16_t)(volts * 1000.0f);
+    rc_channels.tryRead(rc_last);
+    imu_sample.tryRead(imu_last);
+    power_sample.tryRead(power_last);
+    memcpy(pkt.RxReceiver, rc_last.us, sizeof(pkt.RxReceiver));
+    memcpy(pkt.IMU, imu_last.v, sizeof(pkt.IMU));
+    pkt.VoltAndCurr[0] = (uint16_t)(power_last.volts * 1000.0f);
     // Amps packed as mA so sub-amp resolution survives the uint16.
-    pkt.VoltAndCurr[1] = (uint16_t)(amps < 0.0f ? 0.0f : amps * 1000.0f);
+    pkt.VoltAndCurr[1] = (uint16_t)(power_last.amps < 0.0f ? 0.0f : power_last.amps * 1000.0f);
     pkt.Encoder = measured_speed_mps;
     pkt.Timestamp = (int32_t)micros();
     // Checksum the exact bytes going on the wire, magic included.
     pkt.Checksum = crc16_ccitt((const uint8_t *)&pkt, sizeof(TXPacket) - 2);
   }
 
+  // system_state is one byte, so it reads whole without CmdMutex.
   bool infoRequested()
   {
-    CmdMutex.lock();
-    const uint8_t state = system_state;
-    CmdMutex.unlock();
-    return (state & cfg::SYS_STATE::info_request) && piCommandFresh(cfg::DISP::cmd_timeout_ms);
+    return (system_state & cfg::SYS_STATE::info_request) && piCommandFresh(cfg::DISP::cmd_timeout_ms);
   }
 
-  // Sends the info payload one chunk per call, cycling while the Pi keeps
-  // the request bit set. The payload is rebuilt at the start of each cycle;
-  // the revision changes only when its content does.
-  class InfoSender
+  // One info chunk per telemetry frame while the Pi requests it. Each cycle
+  // sends one payload start to end.
+  void sendInfoChunk()
   {
-  public:
-    void step()
+    if (!infoRequested())
     {
-      if (next_ == 0)
-        rebuild();
-      const size_t n = buildInfoPacket(payload_, len_, revision_, next_, packet_, sizeof(packet_));
-      if (n > 0)
-      {
-        Serial1.write(packet_, n);
-        PROF_COUNT(info_chunks);
-      }
-      next_ = (uint16_t)((next_ + 1) % infoChunkCount(len_));
+      info_next = 0;
+      return;
     }
-
-    void reset() { next_ = 0; }
-
-  private:
-    void rebuild()
+    if (info_next == 0)
+      info_sending = info_buffers.take();
+    if (info_sending == nullptr)
+      return;
+    const size_t n = buildInfoPacket(info_sending->data, info_sending->len, info_sending->revision,
+                                     info_next, info_packet, sizeof(info_packet));
+    if (n > 0)
     {
-      const InfoStatus status = {imu_ok, power_ok, wdt::lastResetCause(), wdt::resetFlags(), wdt::armed()};
-      const size_t n = writeFirmwareInfo(status, payload_, sizeof(payload_));
-      const uint16_t crc = crc16_ccitt((const uint8_t *)payload_, n);
-      if (built_ && (n != len_ || crc != crc_))
-        revision_++;
-      len_ = n;
-      crc_ = crc;
-      built_ = true;
+      Serial1.write(info_packet, n);
+      PROF_COUNT(info_chunks);
     }
+    info_next = (uint16_t)((info_next + 1) % infoChunkCount(info_sending->len));
+  }
 
-    char payload_[info::payload_max_bytes];
-    uint8_t packet_[info_packet_max_bytes];
-    size_t len_ = 0;
-    uint16_t crc_ = 0;
-    uint8_t revision_ = 0;
-    uint16_t next_ = 0;
-    bool built_ = false;
-  };
-
-  InfoSender info_sender;
+  void telemetryTick()
+  {
+#ifdef RCN_WDT_TEST
+    if (wdt::test_hang == 't')
+      return;
+#endif
+    wdt::beat(wdt::telemetry);
+    PROF_PERIOD(tx_slot);
+    PROF_START(t_tx);
+    fillTelemetry();
+    Serial1.write((const uint8_t *)&pkt, sizeof(pkt));
+    PROF_SECTION(tx_send, t_tx);
+    PROF_COUNT(tx_frames);
+    sendInfoChunk();
+  }
 }
 
-void UARTTx()
+void startTelemetry()
 {
-  static TXPacket pkt = {};
   initTxHeader(pkt.header);
+  telemetry_timer.priority(cfg::UART::tx_irq_priority);
+  telemetry_timer.begin(telemetryTick, 1000000UL / cfg::UART::tx_freq);
+}
 
-  const uint32_t interval = 1000000UL / cfg::UART::tx_freq;
-  uint32_t next = micros();
+void InfoBuilder()
+{
+  size_t last_len = 0;
+  uint16_t last_crc = 0;
+  uint8_t revision = 0;
+  bool built = false;
+  uint32_t last_build_ms = 0;
 
   while (true)
   {
-    wdt::beat(wdt::telemetry);
-    WDT_TEST_HANG('t');
-    const uint32_t now = micros();
-    if ((int32_t)(now - next) >= 0)
+    wdt::beat(wdt::info_builder);
+    WDT_TEST_HANG('b');
+    // Rebuilt while the Pi requests it; the revision changes only with the
+    // content.
+    if (infoRequested() && (!built || millis() - last_build_ms >= cfg::UART::info_rebuild_ms))
     {
-      PROF_PERIOD(tx_slot);
-      PROF_START(t_tx);
-      fillTelemetry(pkt);
-      Serial1.write((const uint8_t *)&pkt, sizeof(pkt));
-      PROF_SECTION(tx_send, t_tx);
-      PROF_COUNT(tx_frames);
-
-      if (infoRequested())
-        info_sender.step();
-      else
-        info_sender.reset();
-
-      // Hold the average rate; after a stall longer than one slot, restart
-      // from now rather than sending a burst.
-      next += interval;
-      if ((int32_t)(now - next) >= 0)
-        next = now + interval;
+      auto *p = info_buffers.beginBuild();
+      if (p != nullptr)
+      {
+        const InfoStatus status = {imu_ok, power_ok, wdt::lastResetCause(), wdt::resetFlags(), wdt::armed(),
+                                   imu_ok ? imu_regs : Lsm9ds1Registers{}};
+        p->len = writeFirmwareInfo(status, p->data, sizeof(p->data));
+        const uint16_t crc = crc16_ccitt((const uint8_t *)p->data, p->len);
+        if (built && (p->len != last_len || crc != last_crc))
+          revision++;
+        p->revision = revision;
+        last_len = p->len;
+        last_crc = crc;
+        built = true;
+        last_build_ms = millis();
+        info_buffers.publish();
+      }
     }
-    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+    threads.delay(cfg::TEENSY_THREADS::info_tick_ms);
   }
 }
 

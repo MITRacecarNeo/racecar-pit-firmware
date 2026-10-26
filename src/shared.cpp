@@ -16,15 +16,13 @@ bool piCommandFresh(uint32_t timeout_ms)
 
 Seqlock<RcChannels> rc_channels;
 
-Threads::Mutex PowerMutex;
-float power_amps = 0.0f;
-float power_volts = 0.0f;
+Seqlock<PowerSample> power_sample;
 
-Threads::Mutex ImuMutex;
-float imuVals[9] = {0};
+Seqlock<ImuSample> imu_sample;
 
 Threads::Mutex I2CMutex;
 
+Lsm9ds1Registers imu_regs = {};
 volatile bool imu_ok = false;
 volatile bool power_ok = false;
 

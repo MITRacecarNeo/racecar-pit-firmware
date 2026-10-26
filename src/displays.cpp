@@ -132,9 +132,7 @@ void updateLedStrip()
   else
   {
     // Idle default: red charge bar filling from both ends.
-    PowerMutex.lock();
-    const float volts = power_volts;
-    PowerMutex.unlock();
+    const float volts = readShared(power_sample).volts;
     const float mv = constrain(volts * 1000.0f, 0.0f, 65535.0f);
     const int half = (batterySocPercent((uint16_t)mv) * (N / 2)) / 100;
     for (int i = 0; i < half; i++)

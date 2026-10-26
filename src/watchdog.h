@@ -18,8 +18,9 @@ namespace wdt
         power = 1u << 5,
         dot_matrix = 1u << 6,
         main_loop = 1u << 7,
+        info_builder = 1u << 8,
     };
-    constexpr uint32_t all_contexts = (1u << 8) - 1;
+    constexpr uint32_t all_contexts = (1u << 9) - 1;
 
     // Reads and clears the reset cause; call first thing in setup().
     void captureResetCause();

@@ -4,6 +4,100 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-021 - 2026-10-26
+
+### Setup
+As TL-020, with telemetry sent from a 200 Hz IntervalTimer interrupt
+(priority 160), the info payload built by an `InfoBuilder` thread into
+double buffers, and the IMU and INA226 readings shared through sequence
+counters.
+
+### Hypothesis
+With the frame sent from its own timer, the telemetry gap no longer depends
+on the sensor threads; the IMU read split keeps its saving.
+
+### Method
+`scripts/profile_capture.py 60` twice on the profiling build; info reply;
+watchdog test build with the telemetry tick, the info builder and the drive
+tick stopped in turn; plain build, `scripts/telemetry_probe.py 10` three
+times.
+
+### Parameters
+| Name | TL-020 | Timer telemetry | Unit |
+| ---- | ------ | --------------- | ---- |
+| Telemetry rate | 200.0 | 200.0, 200.0 | Hz |
+| Telemetry gap p99 bin / max (firmware) | 6.5 / 6.47 | 5.05 / 5.000 | ms |
+| Teensy-stamped gap max at the Pi (plain build) | - | 5.04, 5.02 | ms |
+| Telemetry tick time | - | 12 | us |
+| `imu_read` | 715 | 715 | us |
+| Drive loop period max | 1.000 | 1.000 | ms |
+| Interrupt lateness max | 0 | 1 | us |
+| Info reply keys | - | 88 | - |
+
+### Observations
+- Every telemetry target passed in both profiling runs. The capture first
+  printed 196.7 Hz for run 2: one report's lines were missing and the tool
+  divided by all 61 windows; it now rates each stat over the windows it
+  appears in, and run 2 recomputes to 200.0 Hz.
+- Telemetry tick, info builder and drive tick stopped in turn: each reset the
+  Teensy by the watchdog (`status.last_reset=watchdog`, flags 128).
+- The first probe after the plain flash showed 2.78 ms median and 24.7 ms max
+  gaps while `pit_node` re-mapped the Teensy clock after the reset; 5 s later
+  every gap was 5.00 to 5.04 ms.
+
+### Conclusion
+Supported. Telemetry leaves every 5.00 ms regardless of the sensor threads;
+the IMU read split stays.
+
+---
+
+## TL-020 - 2026-10-26
+
+### Setup
+Reference car on a block, teleop running. Profiling build of `3e3cfdd` plus
+the LSM9DS1 register readback and the read split: `getAccel()`,
+`getGyro()`, `getMag()` in place of `getEvent(a, m, g, temp)`. A/B against
+the plain `3e3cfdd` build.
+
+### Hypothesis
+The split removes the temperature read and the second magnetometer read,
+shortening each IMU read without changing the values or the timing targets.
+
+### Method
+`scripts/profile_capture.py 60` three times; info reply for the registers;
+`scripts/telemetry_probe.py` on both builds.
+
+### Parameters
+| Name | Before (TL-016, TL-019) | Split | Unit |
+| ---- | ----------------------- | ----- | ---- |
+| `imu_read` | 1090 | 715 | us |
+| Telemetry gap p99 bin / max | 5.6 to 5.9 / 5.57 to 5.85 | 6.5 / 6.47, 6.47, 6.50 | ms |
+| Drive loop period max | 1.000 | 1.000 | ms |
+| Gyro / accel / mag rate read back | - | 952 / 952 / 155 | Hz |
+| Mag full scale read back | - | 8 | gauss |
+| Registers CTRL_REG1_G, CTRL_REG6_XL, CTRL_REG1_M, CTRL_REG2_M, CTRL_REG3_M | - | 0xC8, 0x78, 0x62, 0x20, 0x00 | - |
+
+### Observations
+- The accelerometer runs at the gyro's 952 Hz; the 119 Hz written to ODR_XL
+  has no effect while the gyro runs.
+- The magnetometer reads 8 gauss full scale on the chip, matching the
+  driver's conversion, so a range mismatch does not explain the 2x field.
+- Mag readings were about -57, +136, -32 uT on both builds, against about
+  -83, +167, -160 uT in every reading of 2026-10-25 and the morning of
+  2026-10-26: a change around the car, not in the firmware.
+- The probe's distinct-sample count varied 129 to 180 per second on both
+  builds with the car still; the firmware counted 250 distinct reads per
+  second on both.
+- Telemetry max gap rose from 5.57-5.85 to 6.47-6.50 ms, the same in three
+  runs.
+
+### Conclusion
+Read time down 34%, values unchanged; but the split worsens telemetry jitter
+by about 0.9 ms under round-robin scheduling and fails the 6 ms p99 target.
+Not committed as is.
+
+---
+
 ## TL-019 - 2026-10-26
 
 ### Setup

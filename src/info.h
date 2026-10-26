@@ -11,6 +11,24 @@ namespace info
     constexpr size_t payload_max_bytes = 2048;
 }
 
+// LSM9DS1 configuration registers, read back once the IMU starts.
+struct Lsm9ds1Registers
+{
+    bool read;        // false until the IMU answered
+    uint8_t ctrl1_g;  // 0x10 on the accel/gyro: ODR_G, FS_G, BW_G
+    uint8_t ctrl6_xl; // 0x20 on the accel/gyro: ODR_XL, FS_XL
+    uint8_t ctrl1_m;  // 0x20 on the magnetometer: OM, DO, FAST_ODR
+    uint8_t ctrl2_m;  // 0x21 on the magnetometer: FS
+    uint8_t ctrl3_m;  // 0x22 on the magnetometer: MD
+};
+
+// Rates and range decoded from the registers. With the gyro on, the
+// accelerometer runs at the gyro rate whatever ODR_XL says.
+uint16_t lsm9ds1GyroOdrHz(const Lsm9ds1Registers &r);
+uint16_t lsm9ds1AccelOdrHz(const Lsm9ds1Registers &r);
+float lsm9ds1MagOdrHz(const Lsm9ds1Registers &r);
+uint8_t lsm9ds1MagRangeGauss(const Lsm9ds1Registers &r);
+
 // Sensor state when the payload is built.
 struct InfoStatus
 {
@@ -19,6 +37,7 @@ struct InfoStatus
     const char *last_reset; // "watchdog", "software", "reset", "unknown"
     uint32_t reset_flags;   // SRC_SRSR at boot
     bool watchdog_armed;
+    Lsm9ds1Registers imu_regs;
 };
 
 // Appends "key=value\n" lines to a fixed buffer. Values are formatted without

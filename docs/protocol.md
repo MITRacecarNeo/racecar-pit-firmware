@@ -155,7 +155,10 @@ values come from `config/config.h` unless noted.
 | `rc.valid_min_us`, `rc.valid_max_us` | 900, 2100 | plausible pulse band |
 | `rc.override_throttle_us`, `rc.override_steer_us` | 40, 40 | stick travel that takes over from the Pi |
 | `imu.model` | LSM9DS1 | IMU chip |
-| `imu.accel_range_g`, `imu.accel_rate_hz` | 8, 119 | accel full scale and configured rate |
+| `imu.accel_range_g` | 8 | accel full scale |
+| `imu.gyro_odr_hz`, `imu.accel_odr_hz` | 952, 952 | data rates read back from the chip; the accelerometer follows the gyro while it runs; 0 until the IMU answers |
+| `imu.mag_odr_hz`, `imu.mag_range_read_gauss` | 155.000, 8 | magnetometer rate and full scale read back from the chip |
+| `imu.reg_ctrl1_g`, `imu.reg_ctrl6_xl`, `imu.reg_ctrl1_m`, `imu.reg_ctrl2_m`, `imu.reg_ctrl3_m` | 200, 120, 98, 32, 0 | the raw registers behind those rates |
 | `imu.gyro_range_dps`, `imu.mag_range_gauss` | 500, 8 | gyro and mag full scale |
 | `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |

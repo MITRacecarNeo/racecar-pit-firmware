@@ -13,7 +13,11 @@ namespace cfg
     namespace UART
     {
         constexpr uint32_t baud_rate = 921600;
-        constexpr uint16_t tx_freq = 200;    // Hz, telemetry rate
+        constexpr uint16_t tx_freq = 200;    // Hz, telemetry rate, IntervalTimer
+        // Below the drive tick (144) and the Servo, PPM, hall and serial
+        // interrupts (128); above every thread.
+        constexpr uint8_t tx_irq_priority = 160;
+        constexpr uint32_t info_rebuild_ms = 100; // info payload refresh while requested
         constexpr uint32_t rx_timeout = 50;  // ms, command staleness -> neutral
         constexpr bool verify_rx_crc = true; // drop command frames failing CRC-16
         // The default 64-byte Serial1 FIFO overflows mid-frame: a 474-byte
@@ -145,11 +149,13 @@ namespace cfg
     {
         // Physical settings; sensors.cpp maps them onto the Adafruit enums.
         constexpr uint8_t accel_range_g = 8;      // 2, 4, 8, 16
+        // Written to ODR_XL. With the gyro on the chip runs the accelerometer
+        // at the gyro rate instead; the info reply reports the rates read back.
         constexpr uint16_t accel_rate_hz = 119;   // 10, 50, 119, 238, 476, 952
         constexpr uint8_t mag_range_gauss = 8;    // 4, 8, 12, 16
         constexpr uint16_t gyro_range_dps = 500;  // 245, 500, 2000
-        // Read period. Each read blocks about 1.1 ms on the bus; 250 Hz keeps
-        // a fresh sample in every 200 Hz telemetry frame.
+        // Read period. Each read (accel, gyro, mag) blocks the bus; 250 Hz
+        // keeps a fresh sample in every 200 Hz telemetry frame.
         constexpr uint32_t read_period_us = 4000;
     }
 
@@ -235,6 +241,7 @@ namespace cfg
         constexpr uint16_t loop_tick_ms = 25;    // Arduino loop() yield
         constexpr uint16_t disp_tick_ms = 50;    // dot matrix refresh
         constexpr uint16_t splash_tick_ms = 20;  // boot splash animation step
+        constexpr uint16_t info_tick_ms = 10;    // info builder poll
     }
 
     namespace CAR_SPECS
