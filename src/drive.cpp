@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "drive_map.h"
+#include "profile.h"
 #include "shared.h"
 
 // ------------------------- Hall encoder --------------------------- //
@@ -186,6 +187,8 @@ void DriveControl()
 
   while (true)
   {
+    PROF_PERIOD(drive_loop);
+    PROF_START(t_body);
     const uint32_t now = micros();
     const float dt = (float)(now - lastUs) * 1e-6f;
     lastUs = now;
@@ -282,6 +285,9 @@ void DriveControl()
 
     steerServo.writeMicroseconds(steer_out);
     throtMot.writeMicroseconds(throt_out);
+    PROF_SECTION(drive_body, t_body);
+    if (pi_drive)
+      PROF_CMD_USED();
 
     if (cfg::DEBUG::serial_plot)
     {

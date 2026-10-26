@@ -25,9 +25,14 @@ driver; there is no 0.8.0 firmware release.
 - Host tests: `tests/test_info` (14 cases) and five RC stick map
   cases in `test_logic`; info decoding and reassembly in the pytest suite
   (29 cases). Both suites check the same reference info packet byte for byte.
+- Profiling build `teensy41_profile` (`src/profile.*`, `src/prof_stats.*`):
+  thread periods, section timings, command-to-PWM latency, and interrupt
+  lateness on USB serial; `scripts/profile_capture.py` records and checks
+  them, and `scripts/telemetry_probe.py` measures telemetry at the Pi. Info
+  key `fw.profile`.
 - `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
   `data/`.
-- `cfg::I2C::clock_hz` (100 kHz, the previous default),
+- `cfg::I2C::clock_hz`, 400 kHz (the bus ran at 100 kHz before),
   `cfg::INA226_SENSOR::poll_ms` (1 ms, the previous rate),
   `cfg::UART::tx_buffer_bytes`, `cfg::UART::rx_read_timeout_ms`,
   `cfg::SYS_STATE::info_request`.
@@ -65,6 +70,9 @@ driver; there is no 0.8.0 firmware release.
   to 4.0 m/s. Slow mode stays at 1.0 m/s.
 
 ### Fixed
+- `cfg::I2C::clock_hz` never took effect: Adafruit BusIO's `begin()` calls
+  `Wire.begin()`, which resets the bus to 100 kHz. The clock is applied again
+  after the LSM9DS1 starts.
 - The speed estimate was updated by two threads (telemetry and actuation),
   each pushing samples into the same filter. Only the actuation thread updates
   it now; telemetry reads its result.

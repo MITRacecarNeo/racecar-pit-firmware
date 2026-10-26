@@ -4,6 +4,67 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-014 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, transmitter off, LED strip on the
+idle charge bar. Profiling build (`teensy41_profile`, `fw.profile=1`) of
+`fc35e3a` plus the measurement suite. Battery 7.61 to 7.41 V over the runs.
+
+### Hypothesis
+Every 1 ms thread runs once per scheduler rotation, so `DriveControl` runs far
+below 1 kHz; blocking I2C transfers set the rotation length.
+
+### Method
+`scripts/profile_capture.py 60` per variant (CSV in `data/`), `--probe` on two
+of them for the Pi-side frame count. Variants: the committed config; 400 kHz
+set only in `setup()`; INA226 read every 10 ms; 400 kHz applied again after
+`lsm.begin()`. Telemetry probe and info reply on the last.
+
+### Parameters
+| Name | 100 kHz, INA 1 ms | 400 kHz in setup | 100 kHz, INA 10 ms | 400 kHz applied after begin | Unit |
+| ---- | ----------------- | ---------------- | ------------------ | --------------------------- | ---- |
+| `drive_loop` rate | 180.6 | 180.2 | 249.5 | 620.2 | Hz |
+| `drive_loop` period mean / p99 / max | 5.57 / 10.0 / 10.2 | 5.56 / 9.4 / 10.0 | 4.03 / 8.75 / 9.76 | 1.63 / 6.7 / 7.58 | ms |
+| `tx_slot` rate | 153.9 | 153.4 | 123.9 | 194.3 | Hz |
+| `tx_slot` p99 / max | 14.75 / 15.25 | 13.70 / 14.54 | 12.05 / 13.41 | 11.10 / 11.37 | ms |
+| `imu_read` | 3937 | 3937 | 3937 | 1090 | us |
+| `power_read` | 995 | 995 | 995 | 275 | us |
+| `rx_frame` mean / max | 1686 / 5101 | 1669 / 5055 | 3123 / 5089 | 4213 / 5108 | us |
+| `led_show` mean / max | 194 / 198 | - | - | 194 / 200 | us |
+| `irq_late` max | 0 | - | - | 0 | us |
+| `cmd_to_pwm` mean / max | 44 / 439 | - | - | 26 / 425 | us |
+| Distinct IMU samples | 181 | 180 | 181 | 391 | per s |
+| Pi-side loss | 0.5 | - | - | none measurable | % |
+
+### Observations
+- Every 1 ms thread ran at the same rate (180.6 Hz at 100 kHz): one turn per
+  scheduler rotation. LSM9DS1 and INA226 reads took 4.9 of the 5.57 ms.
+- `Wire.setClock()` in `setup()` had no effect: Adafruit BusIO's `begin()`
+  calls `Wire.begin()`, which resets the bus to 100 kHz. TL-012 therefore ran
+  at 100 kHz. Applying the clock after `lsm.begin()` cut the reads 3.6x.
+- At 400 kHz the accel, gyro, mag and battery values matched the 100 kHz runs;
+  telemetry probe 192.9 and 196.0 Hz at the Pi, median gap 5.37 ms; info reply
+  `i2c.clock_hz=400000`, both sensors `ok`.
+- `FastLED.show()` costs 194 us and no interrupt ran late by 1 us or more; the
+  LED strip does not block on this FastLED version.
+- `UARTRx` busy-waits in `readBytes` until a whole 474-byte command frame has
+  arrived (5.1 ms on the wire); with shorter rotations it starts earlier and
+  waits longer (4.2 ms mean at 400 kHz, about 25% of the CPU at 60 Hz).
+- `cmd_to_pwm` counts from frame accepted, so it misses time a frame waits in
+  the serial buffer before `UARTRx` runs.
+- `report_lines_dropped` was cumulative in the first run (78 lines from before
+  the capture opened the port); it resets each second from the second run on.
+
+### Conclusion
+Supported. `DriveControl` ran at 181 Hz, not 1 kHz. Blocking I2C at an
+unintended 100 kHz set the rotation; with the clock applied after `begin()`
+the drive loop reached 620 Hz and telemetry 194 Hz. Remaining blockers: the
+`readBytes` wait in `UARTRx`, blocking I2C, and round-robin scheduling
+(drive-loop max 7.6 ms).
+
+---
+
 ## TL-013 - 2026-10-25
 
 ### Setup

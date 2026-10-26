@@ -116,6 +116,11 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.text("fw.git", FW_STR(FW_GIT_HASH));
   w.integer("fw.git_dirty", FW_GIT_DIRTY ? 1 : 0);
   w.text("fw.board", "teensy41");
+#ifdef RCN_PROFILE
+  w.integer("fw.profile", 1);
+#else
+  w.integer("fw.profile", 0);
+#endif
   w.integer("fw.protocol", wire::protocol_version);
   w.text("fw.speed_control", "closed_loop");
 

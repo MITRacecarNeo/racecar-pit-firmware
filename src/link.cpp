@@ -7,6 +7,7 @@
 #include "crc16.h"
 #include "info.h"
 #include "packets.h"
+#include "profile.h"
 #include "shared.h"
 
 namespace
@@ -55,7 +56,10 @@ namespace
         rebuild();
       const size_t n = buildInfoPacket(payload_, len_, revision_, next_, packet_, sizeof(packet_));
       if (n > 0)
+      {
         Serial1.write(packet_, n);
+        PROF_COUNT(info_chunks);
+      }
       next_ = (uint16_t)((next_ + 1) % infoChunkCount(len_));
     }
 
@@ -99,8 +103,12 @@ void UARTTx()
     const uint32_t now = micros();
     if ((int32_t)(now - next) >= 0)
     {
+      PROF_PERIOD(tx_slot);
+      PROF_START(t_tx);
       fillTelemetry(pkt);
       Serial1.write((const uint8_t *)&pkt, sizeof(pkt));
+      PROF_SECTION(tx_send, t_tx);
+      PROF_COUNT(tx_frames);
 
       if (infoRequested())
         info_sender.step();
@@ -142,6 +150,7 @@ void UARTRx()
 
   while (true)
   {
+    PROF_PERIOD(rx_loop);
     while (Serial1.available())
     {
       // Slide a 4-byte window over the stream until the magic word lands.
@@ -153,15 +162,25 @@ void UARTRx()
       if (seen != magic)
         continue;
 
+      PROF_START(t_rx);
       if (Serial1.readBytes((char *)&rx, sizeof(rx)) != sizeof(rx))
+      {
+        PROF_COUNT(rx_short);
         continue;
+      }
 
       const uint16_t crc = crc16_ccitt((const uint8_t *)&rx, sizeof(RxPacket) - 2, magic_crc);
       if (cfg::UART::verify_rx_crc && crc != rx.Checksum)
+      {
+        PROF_COUNT(rx_crc_fail);
         continue;
+      }
 
       applyCommand(rx);
       lastRxTime = micros();
+      PROF_SECTION(rx_frame, t_rx);
+      PROF_COUNT(rx_frames);
+      PROF_CMD_ACCEPTED();
     }
     threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }

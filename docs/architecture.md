@@ -38,6 +38,7 @@ allocation after boot.
 | `src/sensors.{h,cpp}` | `ReadCurrAndVolt`, `ReadIMUStates`, `RxReceive` | INA226, Adafruit LSM9DS1, PPM-reader |
 | `src/displays.{h,cpp}` | `DotMatrix` thread, `updateLedStrip` | MD_Parola, FastLED, `battery` |
 | `src/main.cpp` | Boot: peripherals, interrupts, thread launch | all threads |
+| `src/profile.{h,cpp}`, `src/prof_stats.{h,cpp}` | Profiling hooks and statistics; active only with `RCN_PROFILE` | cycle counter, IntervalTimer |
 | `scripts/pit_uart.py` | Bench tool: drives the link from the Pi without ROS | numpy, pyserial |
 
 ## Threads
@@ -160,6 +161,28 @@ Command frames are received, CRC-checked, and stored regardless of either
 switch; override is applied at actuation only. The Pi therefore never blocks on
 the Teensy, and reading the switches out of `/rc/channels` is optional.
 
+## Profiling build
+
+`pio run -e teensy41_profile` builds the same firmware with `-DRCN_PROFILE`.
+The hooks in `src/profile.h` compile to nothing in the shipped build. The
+profiling build times thread loops and code sections with the ARM cycle
+counter, runs a 10 kHz top-priority timer interrupt whose lateness bounds
+interrupt-masked windows, and once per second prints one line per stat on
+USB serial (`/dev/ttyACM0`):
+
+```
+P,<t_ms>,period,<name>,<n>,<sum_us>,<max_us>,<p50_us>,<p99_us>
+P,<t_ms>,section,<name>,<n>,<sum_us>,<max_us>
+P,<t_ms>,counter,<name>,<value>
+```
+
+Periods are the time between successive events of one context (50 us
+histogram bins, quantiles as upper bin edges). Names are listed in
+`src/profile.h`. Lines are dropped, and counted in `report_lines_dropped`,
+when the USB transmit buffer is full, so `loop()` never waits on USB.
+`scripts/profile_capture.py` records them to `data/` and checks them against
+the timing targets.
+
 ## Interfaces
 
 | Interface | Pins / device                     | Defined in                     |
@@ -172,7 +195,7 @@ the Teensy, and reading the switches out of `/rc/channels` is optional.
 | WS2812B   | pin 9                             | `cfg::RGB_LED_WS2812B`         |
 | MAX7219   | SPI, CS pin 10                    | `cfg::MAX_7219_DOT_MATRIX`     |
 | Hall      | pins 30, 31, 32 (IRQ on CHANGE)   | `cfg::ES2845S_4900KV_MOTOR`    |
-| I2C       | INA226 at 0x40, LSM9DS1, 100 kHz  | `cfg::I2C`, `cfg::INA226_SENSOR`, `cfg::LSM9DS1_IMU` |
+| I2C       | INA226 at 0x40, LSM9DS1, 400 kHz  | `cfg::I2C`, `cfg::INA226_SENSOR`, `cfg::LSM9DS1_IMU` |
 
 The wire format in `src/packets.h` is shared with `racecar_neo_ros2_driver`
 (`pit_protocol.py`). Struct sizes are pinned by `static_assert`; changing one is

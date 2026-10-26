@@ -7,6 +7,7 @@
 
 #include "battery.h"
 #include "config.h"
+#include "profile.h"
 #include "shared.h"
 
 namespace
@@ -35,6 +36,7 @@ void DotMatrix()
 
   while (true)
   {
+    PROF_PERIOD(dot_loop);
     static bool bmp[wire::dot_matrix_bytes];
     CmdMutex.lock();
     memcpy(bmp, dotmatrix_cmd, sizeof(bmp));
@@ -89,6 +91,7 @@ void DotMatrix()
 
 void updateLedStrip()
 {
+  PROF_PERIOD(led_loop);
   constexpr int N = cfg::RGB_LED_WS2812B::num_leds;
 
   static uint8_t local_led[N * 3];
@@ -138,5 +141,7 @@ void updateLedStrip()
     }
   }
 
+  PROF_START(t_show);
   FastLED.show();
+  PROF_SECTION(led_show, t_show);
 }

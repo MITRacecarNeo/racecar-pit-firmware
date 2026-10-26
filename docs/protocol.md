@@ -124,6 +124,7 @@ values come from `config/config.h` unless noted.
 | `fw.git` | e330426 | short commit of the build; `unknown` outside git |
 | `fw.git_dirty` | 0 | 1 when built with uncommitted tracked changes |
 | `fw.board` | teensy41 | target board |
+| `fw.profile` | 0 | 1 in the profiling build (`teensy41_profile`) |
 | `fw.protocol` | 1 | header `VersionNum` |
 | `fw.speed_control` | closed_loop | Pi throttle is a speed setpoint on the encoder |
 | `link.baud` | 921600 | UART baud |
@@ -162,7 +163,7 @@ values come from `config/config.h` unless noted.
 | `power.avg_samples` | 16 | INA226 hardware averaging |
 | `power.poll_ms` | 1 | INA226 read period |
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
-| `i2c.clock_hz` | 100000 | I2C bus clock |
+| `i2c.clock_hz` | 400000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |
 | `status.imu`, `status.power` | ok | `missing` until the sensor answers |
 

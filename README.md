@@ -327,6 +327,18 @@ pytest
 ruff check scripts tests/scripts && black --check scripts tests/scripts && mypy
 ```
 
+### Profiling
+
+```sh
+pio run -e teensy41_profile -t upload                 # firmware with timing hooks
+python3 scripts/profile_capture.py 60 --tag baseline  # 60 s, CSV under data/
+python3 scripts/telemetry_probe.py 10 --runs 3        # telemetry as pit_node publishes it
+```
+
+The profiling build reports thread periods, section timings, command-to-PWM
+latency, and interrupt lateness on the USB serial port once per second; see
+`docs/architecture.md`. Flash the plain build (`pio run -t upload`) afterward.
+
 Hardware runs are recorded in `docs/test-log.md`.
 
 ## Architecture

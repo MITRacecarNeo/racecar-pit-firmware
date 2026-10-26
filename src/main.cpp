@@ -8,6 +8,7 @@
 #include "displays.h"
 #include "drive.h"
 #include "link.h"
+#include "profile.h"
 #include "sensors.h"
 
 void setup()
@@ -34,6 +35,7 @@ void setup()
   threads.addThread(DotMatrix);
   threads.addThread(UARTTx);
   threads.addThread(UARTRx);
+  PROF_BEGIN();
 
   delay(cfg::TEENSY_THREADS::startup_delay);
 }
@@ -41,5 +43,6 @@ void setup()
 void loop()
 {
   updateLedStrip();
+  PROF_REPORT();
   threads.delay(cfg::TEENSY_THREADS::loop_tick_ms);
 }

@@ -107,6 +107,7 @@ static void test_payload_starts_with_schema_and_version(void)
     TEST_ASSERT_EQUAL_STRING("0.9.0", valueOf("fw.version"));
     TEST_ASSERT_EQUAL_STRING("unknown", valueOf("fw.git"));
     TEST_ASSERT_EQUAL_STRING("dev", valueOf("fw.label"));
+    TEST_ASSERT_EQUAL_STRING("0", valueOf("fw.profile"));
     TEST_ASSERT_EQUAL_STRING("1", valueOf("fw.protocol"));
 }
 
@@ -130,7 +131,7 @@ static void test_payload_reports_the_compiled_config(void)
     TEST_ASSERT_EQUAL_STRING("0.0720", valueOf("drivetrain.wheel_diameter_m"));
     TEST_ASSERT_EQUAL_STRING("16", valueOf("power.avg_samples"));
     TEST_ASSERT_EQUAL_STRING("1", valueOf("power.poll_ms"));
-    TEST_ASSERT_EQUAL_STRING("100000", valueOf("i2c.clock_hz"));
+    TEST_ASSERT_EQUAL_STRING("400000", valueOf("i2c.clock_hz"));
     TEST_ASSERT_EQUAL_STRING("rad/s", valueOf("imu.gyro_unit"));
 }
 

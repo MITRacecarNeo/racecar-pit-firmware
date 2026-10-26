@@ -6,8 +6,10 @@
 #include <INA226.h>
 #include <PPMReader.h>
 #include <TeensyThreads.h>
+#include <Wire.h>
 
 #include "config.h"
+#include "profile.h"
 #include "shared.h"
 
 namespace
@@ -74,10 +76,16 @@ void ReadCurrAndVolt()
 
   while (true)
   {
+    PROF_PERIOD(power_loop);
+    PROF_START(t_wait);
     I2CMutex.lock();
+    PROF_SECTION(power_bus_wait, t_wait);
+    PROF_START(t_read);
     const float amps = ina.getCurrent();
     const float volts = ina.getBusVoltage();
+    PROF_SECTION(power_read, t_read);
     I2CMutex.unlock();
+    PROF_COUNT(power_reads);
 
     PowerMutex.lock();
     power_amps = amps;
@@ -101,6 +109,9 @@ void ReadIMUStates()
       lsm.setupAccel(accelRange(cfg::LSM9DS1_IMU::accel_range_g), accelRate(cfg::LSM9DS1_IMU::accel_rate_hz));
       lsm.setupMag(magGain(cfg::LSM9DS1_IMU::mag_range_gauss));
       lsm.setupGyro(gyroScale(cfg::LSM9DS1_IMU::gyro_range_dps));
+      // Adafruit BusIO's begin() calls Wire.begin(), which resets the bus to
+      // 100 kHz; apply the configured clock again.
+      Wire.setClock(cfg::I2C::clock_hz);
     }
     I2CMutex.unlock();
     if (found)
@@ -111,10 +122,25 @@ void ReadIMUStates()
 
   while (true)
   {
+    PROF_PERIOD(imu_loop);
     sensors_event_t a, m, g, temp;
+    PROF_START(t_wait);
     I2CMutex.lock();
+    PROF_SECTION(imu_bus_wait, t_wait);
+    PROF_START(t_read);
     lsm.getEvent(&a, &m, &g, &temp);
+    PROF_SECTION(imu_read, t_read);
     I2CMutex.unlock();
+#ifdef RCN_PROFILE
+    static float last_sample[3] = {0, 0, 0};
+    if (a.acceleration.x != last_sample[0] || a.acceleration.z != last_sample[1] || g.gyro.z != last_sample[2])
+    {
+      PROF_COUNT(imu_distinct);
+      last_sample[0] = a.acceleration.x;
+      last_sample[1] = a.acceleration.z;
+      last_sample[2] = g.gyro.z;
+    }
+#endif
 
     ImuMutex.lock();
     imuVals[0] = a.acceleration.x;
@@ -138,6 +164,7 @@ void RxReceive()
 
   while (true)
   {
+    PROF_PERIOD(rc_loop);
     uint16_t values[cfg::FLYSKY_IA6B_RX::channel_count];
     for (uint8_t i = 0; i < cfg::FLYSKY_IA6B_RX::channel_count; i++)
       values[i] = ppm.latestValidChannelValue(i + 1, 0);
