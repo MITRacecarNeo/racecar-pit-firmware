@@ -194,7 +194,7 @@ wrapping counter.
 ## RC receiver
 
 The FS-iA6B feeds PPM into pin 5; `RxReceive` copies channels 1-8 into
-`channelVals[0..7]`, so index N-1 is PPM channel N. The transmitter emits AETR
+slots 0-7 of the shared RC channel block, so index N-1 is PPM channel N. The transmitter emits AETR
 order.
 
 | Index | PPM ch | Source | Centering | Used by |
@@ -230,17 +230,21 @@ narrowing the array would change `TXPacket` and break the wire. See
 ### Switches
 
 The FS-i6 aux order puts swA through swD on CH5 through CH8, all four of which
-arrive over PPM. A pulse at or above `sw_threshold` (1500 us) is up; anything
-below, and any channel that is absent or outside the valid band, is down.
+arrive over PPM. A pulse at or above `sw_threshold` (1500 us) is high; a
+plausible pulse below it is low; a channel that is absent or outside the
+valid band is neither. On the FS-i6 as set up, a lever pointing up (away from
+the operator) sends low.
 
-| Switch | Ch | Index | Down | Up |
-| ------ | -- | ----- | ---- | -- |
-| swA | CH5 | 4 | fast: speed capped by `max_speed_mps` (1.0 m/s indoor, 4.0 m/s field) | slow: capped at `slow_speed_mps` (1.0 m/s) |
-| swD | CH8 | 7 | Pi autonomy commands accepted | manual override, Teensy drives alone |
+| Switch | Ch | Index | Lever up: low (default) | Lever down: high | No receiver signal |
+| ------ | -- | ----- | ----------------------- | ---------------- | ------------------ |
+| swA | CH5 | 4 | slow: capped at `slow_speed_mps` (1.0 m/s) | fast: capped by `max_speed_mps` (1.0 m/s indoor, 4.0 m/s field) | fast |
+| swD | CH8 | 7 | Pi commands accepted | manual override, Teensy drives alone | Pi commands accepted |
 
-Both default to the left column when the receiver is absent, so losing the link
-never leaves the car stuck slow or the Pi locked out. The decode is
-`rcSwitchUp()` in `drive_map.h`, host tested.
+The FS-i6 refuses to start transmitting until every lever is up, so the car
+sees slow mode and Pi control when the transmitter comes on. A receiver with
+no transmitter leaves the Pi in control. Reversing a switch channel on the
+transmitter swaps its two columns. The decode is `rcSwitchUp()` (high) and
+`rcSwitchDown()` (low) in `drive_map.h`, host tested.
 
 Slow mode rescales the full stick travel onto `slow_speed_mps` on both paths,
 so full throttle is a 1.0 m/s setpoint exactly rather than a clipped `max_speed_mps`
@@ -263,12 +267,13 @@ autonomy is locked out. The LED strip is untouched and the Pi can still drive it
 Both switches ride in the existing telemetry RC array, so this needs no protocol
 change. The driver reads the same two channels from `/rc/channels` and applies
 the same threshold: index 4 for speed mode, index 7 for override, up at or above
-1500 us raw (0.0 normalized). The driver is not required to act on either
+1500 us raw (0.0 normalized) for high: speed mode index 4 is slow when low,
+override index 7 is on when high. The driver is not required to act on either
 switch. Command frames are received, CRC-checked, and stored no matter what the
 switches say; override is applied at actuation only, so the Pi can keep
 publishing at its own rate and never blocks or gridlocks on the Teensy. Reading
 the switches is therefore optional and only useful for telling the operator what
-the car is doing. Flipping override back down resumes drive on the next frame,
+the car is doing. Flipping swD back up resumes drive on the next frame,
 with no reconnect.
 
 ## Idle displays
@@ -304,9 +309,10 @@ UART (Teensy `Serial1` to the Pi's `/dev/neo-pit-pcb`, a udev symlink to
 `ttyAMA0` on Pi 5 / Ubuntu). The Pi needs `enable_uart=1` and a reboot to
 activate GPIO14/15.
 
-Set `cfg::DEBUG::serial_plot` to enable the Teleplot-style control-loop trace on
-the USB serial port. It is off by default because it runs inside the 1 kHz
-actuation loop.
+Set `cfg::DEBUG::serial_plot` to enable the Teleplot-style speed-loop trace
+on the USB serial port. It prints the latest target speed, measured speed and
+ESC PWM from `loop()` every 25 ms, so it samples the 1 kHz loop rather than
+following every tick.
 
 ## Tests
 

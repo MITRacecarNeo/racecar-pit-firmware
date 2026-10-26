@@ -43,7 +43,7 @@ void DotMatrix()
     const uint8_t state = system_state;
     CmdMutex.unlock();
 
-    // swD up: the Teensy owns the display too. M while the sticks are live,
+    // Override: the Teensy owns the display too. M while the sticks are live,
     // I otherwise; the Pi's auto glyph has no meaning while it is locked out.
     const bool override_on = manual_override;
     const uint8_t mode = override_on

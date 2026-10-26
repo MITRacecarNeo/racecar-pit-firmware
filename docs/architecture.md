@@ -4,9 +4,9 @@
 
 Two ends of one serial link. A Teensy 4.1 on the NEO-PIT drive PCB owns every
 actuator and sensor on the RACECAR Neo V2; a Raspberry Pi 5 sends normalized
-drive commands and consumes telemetry. The Teensy runs seven threads under
-TeensyThreads plus the Arduino `loop()`; there is no RTOS and no dynamic
-allocation after boot.
+drive commands and consumes telemetry. The drive loop runs in a 1 kHz timer
+interrupt; six threads under TeensyThreads and the Arduino `loop()` do the
+I/O. There is no RTOS and no dynamic allocation after boot.
 
 ```
                     FlySky iA6B (PPM)
@@ -34,7 +34,9 @@ allocation after boot.
 | `src/battery.{h,cpp}` | 2S LiPo voltage-to-charge curve; Arduino-free | none |
 | `src/shared.{h,cpp}` | State shared between threads and its mutexes | TeensyThreads |
 | `src/link.{h,cpp}` | `UARTTx`, `UARTRx`: telemetry, info chunks, commands | `packets`, `info`, `shared` |
-| `src/drive.{h,cpp}` | `DriveControl`, speed PID, hall ISR and speed estimate | `drive_map`, `shared`, Servo |
+| `src/drive.{h,cpp}` | Drive tick (1 kHz interrupt), speed PID, hall ISR and speed estimate | `drive_map`, `shared`, Servo, IntervalTimer |
+| `src/seqlock.h` | Single-writer value readable from an interrupt; Arduino-free | none |
+| `src/command_framer.{h,cpp}` | Command frame assembly from the UART byte stream; Arduino-free | `packets`, `crc16` |
 | `src/sensors.{h,cpp}` | `ReadCurrAndVolt`, `ReadIMUStates`, `RxReceive` | INA226, Adafruit LSM9DS1, PPM-reader |
 | `src/displays.{h,cpp}` | `DotMatrix` thread, `updateLedStrip` | MD_Parola, FastLED, `battery` |
 | `src/main.cpp` | Boot: peripherals, interrupts, thread launch | all threads |
@@ -43,25 +45,35 @@ allocation after boot.
 
 ## Threads
 
-Started in `setup()`; each loops forever and yields with `threads.delay()`.
+The drive tick is an IntervalTimer interrupt started in `setup()`. The threads
+start after it; each loops forever and yields with `threads.delay()` or
+`threads.yield()`. TeensyThreads runs them round robin with 1 ms slices and
+no priorities, so a thread waits for every other thread's turn; the drive
+loop does not.
 
-| Thread | Period | Reads | Writes |
-| ------ | ------ | ----- | ------ |
-| `DriveControl` | 1 ms | `channelVals`, `cmd_setpoint`, hall ISR state | servo + ESC PWM, `measured_speed_mps`, `manual_override`, `rc_driving` |
-| `RxReceive` | 1 ms | PPM pin | `channelVals` |
-| `ReadCurrAndVolt` | 1 ms | INA226 (I2C) | `power_amps`, `power_volts`, `power_ok` |
-| `ReadIMUStates` | 1 ms | LSM9DS1 (I2C) | `imuVals`, `imu_ok` |
-| `UARTTx` | 5 ms slot | `channelVals`, `imuVals`, power, `measured_speed_mps`, `system_state` | `Serial1` |
-| `UARTRx` | 1 ms | `Serial1` | `cmd_setpoint`, display buffers, `system_state`, `lastRxTime` |
+| Context | Period | Reads | Writes |
+| ------- | ------ | ----- | ------ |
+| Drive tick (interrupt) | 1 ms | `rc_channels`, `drive_cmd`, hall ISR state | servo + ESC PWM, `measured_speed_mps`, `manual_override`, `rc_driving` |
+| `RxReceive` | 1 ms | PPM pin | `rc_channels` |
+| `ReadCurrAndVolt` | 10 ms | INA226 (I2C) | `power_amps`, `power_volts`, `power_ok` |
+| `ReadIMUStates` | 4 ms | LSM9DS1 (I2C) | `imuVals`, `imu_ok` |
+| `UARTTx` | 5 ms slot | `rc_channels`, `imuVals`, power, `measured_speed_mps`, `system_state` | `Serial1` |
+| `UARTRx` | 1 ms | `Serial1` | `drive_cmd`, display buffers, `system_state`, `lastRxTime` |
 | `DotMatrix` | 50 ms | `dotmatrix_cmd`, `system_state`, `manual_override` | MAX7219 (SPI) |
-| `loop()` | 25 ms | `led_cmd`, `system_state`, power | WS2812B strip |
+| `loop()` | 25 ms | `led_cmd`, `system_state`, power | WS2812B strip, serial trace |
 
-Each shared block has one writer. Blocks wider than one word take their own
-mutex, never one global lock: `CmdMutex` (Pi command and display buffers),
-`RxMutex` (`channelVals`), `ImuMutex`, `PowerMutex`, and `I2CMutex` for the
+The drive tick runs at priority 144, below the Servo, PPM, hall and serial
+interrupts (128), so pulse edges and RC pulse timing never wait on it.
+
+Each shared block has one writer. What the drive tick reads goes through a
+`Seqlock` (`src/seqlock.h`): a sequence counter that is odd during a write.
+An interrupt cannot wait on a mutex; when it lands mid-write it keeps the
+previous value. Threads reading a `Seqlock` retry with `readShared()`. Other
+blocks wider than one word take their own mutex: `CmdMutex` (display
+buffers, `system_state`), `ImuMutex`, `PowerMutex`, and `I2CMutex` for the
 bus both sensors share. Single words (`lastRxTime`, the sensor and drive
 flags, `measured_speed_mps`) are `volatile`. The hall ISR state is read under
-`noInterrupts()`, since an ISR cannot block on a mutex.
+`noInterrupts()`.
 
 A sensor that does not answer `begin()` is retried every 100 ms with the bus
 released, so the other sensor keeps running; its `status.*` info key reads
@@ -74,15 +86,15 @@ Telemetry, Teensy to Pi:
 ```
 LSM9DS1 --I2C--> ReadIMUStates  -> imuVals[9] ------+
 INA226  --I2C--> ReadCurrAndVolt -> power ----------+
-iA6B    --PPM--> RxReceive -> channelVals[8] -------+--> UARTTx (200 Hz, CRC-16) --> Serial1
-hall    --IRQ--> DriveControl -> measured_speed_mps +        |
+iA6B    --PPM--> RxReceive -> rc_channels[8] -------+--> UARTTx (200 Hz, CRC-16) --> Serial1
+hall    --IRQ--> drive tick -> measured_speed_mps --+        |
                                                              +--> info chunk while requested
 ```
 
 Command, Pi to Teensy:
 
 ```
-Serial1 -> UARTRx (magic sync, CRC-16 gate) -> cmd_setpoint[2] -> DriveControl -> speedPID -> ESC PWM
+Serial1 -> UARTRx (CommandFramer, CRC-16 gate) -> drive_cmd -> drive tick -> speedPID -> ESC PWM
                                             -> dotmatrix_cmd / led_cmd / system_state -> DotMatrix, updateLedStrip
                                             -> system_state info_request -> UARTTx
 ```
@@ -91,7 +103,7 @@ The speed estimate averages the last five hall intervals, converts electrical
 to mechanical RPM, then low-pass filters at `rpm_filter_alpha`. It applies the
 two gear ratios and the wheel circumference to reach m/s at the ground, which
 is what the encoder field carries and what the speed loop closes on. Only
-`DriveControl` updates it.
+the drive tick updates it.
 
 `UARTTx` keeps a running deadline; after a stall longer than one slot it
 restarts from the current time. The rate reaches `tx_freq` only while the
@@ -102,7 +114,7 @@ so a slot never blocks the thread.
 ## RC receiver mapping
 
 The FS-iA6B feeds PPM into pin 5. `PPMReader` decodes it and `RxReceive` copies
-channels 1-8 into `channelVals[0..7]`, so index N-1 is PPM channel N. The
+channels 1-8 into `rc_channels` slots 0-7, so index N-1 is PPM channel N. The
 transmitter emits AETR order.
 
 | Index | PPM ch | Transmitter source (FS-i6 default) | Centering | Used by |
@@ -118,13 +130,13 @@ transmitter emits AETR order.
 
 Drive reads only sprung axes, so both controls return to center on release. CH3
 is the transmitter's own throttle axis and is ratcheted; the RC override in
-`DriveControl` treats any output past `throt_override_band` as a human at the
+drive tick treats any output past `throt_override_band` as a human at the
 controls, so a stick resting at its low endpoint would hold the car in reverse
 and lock out the Pi. Stick polarity is set on the transmitter, not in firmware.
 
 `latestValidChannelValue(ch, 0)` returns 0 for a channel that is absent, out of
 band, or stale past the library's 500 ms failsafe; otherwise it clamps into
-1000-2000 us. So `channelVals[i]` is either 0 or a clamped pulse width, and
+1000-2000 us. So each channel is either 0 or a clamped pulse width, and
 `rc_valid_min`/`rc_valid_max` (900/2100) reject only the 0 case.
 
 All eight slots are republished raw over telemetry (`TXPacket.RxReceiver`), the
@@ -134,21 +146,22 @@ format, so dropping the dead slots would be a protocol break.
 
 ### Switch contract
 
-`rcSwitchUp()` in `drive_map.h` decides a switch: up at or above `sw_threshold`
-(1500 us), down otherwise, and down for any pulse outside the valid band. An
-absent channel reads 0, so a lost receiver resolves both switches to their
-permissive position.
+`rcSwitchUp()` and `rcSwitchDown()` in `drive_map.h` decide a switch: high at
+or above `sw_threshold` (1500 us), low for a valid pulse below it, and neither
+for a pulse outside the valid band. An absent channel reads 0, so a receiver
+with no signal leaves fast mode and the Pi in control. On the FS-i6 as set
+up, lever up sends low.
 
-| Switch | Ch | Index | Down | Up | Resolved in |
-| ------ | -- | ----- | ---- | -- | ----------- |
-| swA | CH5 | 4 | fast, `max_speed_mps` | slow, `slow_speed_mps` | `DriveControl` |
-| swD | CH8 | 7 | Pi autonomy allowed | Teensy-only drive | `DriveControl`, `DotMatrix` |
+| Switch | Ch | Index | Low, lever up (default) | High, lever down | Resolved in |
+| ------ | -- | ----- | ----------------------- | ---------------- | ----------- |
+| swA | CH5 | 4 | slow, `slow_speed_mps` | fast, `max_speed_mps` | drive tick |
+| swD | CH8 | 7 | Pi allowed | Teensy-only drive | drive tick, `DotMatrix` |
 
 Confirmed on hardware: CH5 is swA, CH6 is swB, and CH8 is swD and arrives
 intact. The iA6B has six servo rails, but the PPM stream carries the whole
 frame, so all eight slots populate.
 
-`DriveControl` publishes both states to `DotMatrix` through the `manual_override` and
+The drive tick publishes both states to `DotMatrix` through the `manual_override` and
 `rc_driving` volatiles. Under override the display shows `M` while the sticks
 are live and `I` otherwise, and the Pi's bitmap and mode bits are ignored.
 
@@ -203,14 +216,15 @@ a protocol break that has to land on both sides together.
 
 ## Constraints
 
-- Actuation runs at 1 kHz; anything that blocks longer than a few milliseconds
-  inside `DriveControl` shows up as jitter at the ESC.
+- Actuation runs at 1 kHz in an interrupt; the tick must stay short (a few
+  microseconds) and must never wait on a mutex, `Serial`, or the I2C bus.
 - `Serial1` gets a 2048-byte RX buffer. The stock 64 bytes fills in about 0.7 ms
   at 921600 baud, shorter than the scheduler can preempt `UARTRx` for, and a
   474-byte command frame is lost mid-flight when it overflows.
-- swD up locks the Pi out of drive: centered sticks hold neutral rather than
-  handing control back to autonomy. The link stays live and frames are still
-  accepted, so drive resumes on the next frame when the switch drops.
+- swD high (lever down) locks the Pi out of drive: centered sticks hold
+  neutral rather than handing control back to autonomy. The link stays live
+  and frames are still accepted, so drive resumes on the next frame when the
+  lever goes back up.
 - Pi commands are dropped after `rx_timeout` (50 ms) and the drive falls to
   neutral. The RC transmitter overrides the Pi whenever a stick leaves its
   neutral band and a plausible pulse is present, so a dead receiver holds

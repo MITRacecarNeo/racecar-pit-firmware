@@ -31,7 +31,8 @@ namespace cfg
     namespace DEBUG
     {
         constexpr uint32_t usb_baud = 115200;
-        // Teleplot trace on USB serial; runs inside the 1 kHz actuation loop.
+        // Teleplot trace of the speed loop on USB serial, printed from loop()
+        // at its 25 ms tick.
         constexpr bool serial_plot = false;
     }
 
@@ -110,12 +111,15 @@ namespace cfg
         constexpr uint8_t ch_steer = 3; // CH4 rudder, left stick X
         constexpr uint8_t ch_throt = 1; // CH2 elevator, right stick Y
 
-        // Two-position switches, shared with the driver: it reads the same
-        // channels and threshold out of the telemetry RC array.
-        //   ch_speed_mode      down = fast (config cap), up = slow
-        //   ch_manual_override down = Pi autonomy allowed, up = RC only
-        // Both default to the permissive position when the channel is absent,
-        // so losing the receiver never leaves the car slow or locked out.
+        // Two-position switches, decoded by pulse width: high at or above
+        // sw_threshold, low below it. On the FS-i6 as set up, lever up (away
+        // from the operator) sends low, and the transmitter starts only with
+        // every lever up:
+        //   ch_speed_mode      low (up) = slow, high (down) = fast (config cap)
+        //   ch_manual_override low (up) = Pi allowed, high (down) = RC only
+        // A channel that is absent or out of band reads as neither: fast mode
+        // and the Pi allowed, so a receiver without a transmitter falls back to
+        // the Pi.
         constexpr uint8_t ch_speed_mode = 4;      // CH5, swA
         constexpr uint8_t ch_manual_override = 7; // CH8, swD
         constexpr uint16_t sw_threshold = 1500;   // us, at or above = switch up
@@ -131,9 +135,8 @@ namespace cfg
         constexpr uint8_t i2c_addy = 0x40;
         constexpr uint8_t avg_set = 2; // INA226 library enum index: 2 = 16 samples
         // 16 samples of 1.1 ms bus plus 1.1 ms shunt conversion give a new
-        // value every 35.2 ms. A slower poll leaves the bus to the IMU thread,
-        // which then holds the CPU longer under round-robin scheduling.
-        constexpr uint16_t poll_ms = 1;
+        // value every 35.2 ms; reading faster only repeats it.
+        constexpr uint16_t poll_ms = 10;
         constexpr float max_curr_expected = 8.0;  // Amps
         constexpr float shunt_resistance = 0.002; // Ohms
     }
@@ -145,6 +148,9 @@ namespace cfg
         constexpr uint16_t accel_rate_hz = 119;   // 10, 50, 119, 238, 476, 952
         constexpr uint8_t mag_range_gauss = 8;    // 4, 8, 12, 16
         constexpr uint16_t gyro_range_dps = 500;  // 245, 500, 2000
+        // Read period. Each read blocks about 1.1 ms on the bus; 250 Hz keeps
+        // a fresh sample in every 200 Hz telemetry frame.
+        constexpr uint32_t read_period_us = 4000;
     }
 
     namespace MAX_7219_DOT_MATRIX
@@ -200,6 +206,14 @@ namespace cfg
         constexpr uint8_t led_active = 0x08;       // Pi is commanding the LED strip
         constexpr uint8_t driver_starting = 0x10;  // Pi driver just launched: play the LED loading sweep
         constexpr uint8_t info_request = 0x20;     // send info chunks until the Pi clears it
+    }
+
+    namespace DRIVE_LOOP
+    {
+        constexpr uint32_t period_us = 1000; // drive tick, IntervalTimer
+        // Below the Servo, PPM, hall and serial interrupts (default 128), so
+        // pulse edges and RC timing are never delayed; above every thread.
+        constexpr uint8_t irq_priority = 144;
     }
 
     namespace TEENSY_THREADS

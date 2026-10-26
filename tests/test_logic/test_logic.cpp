@@ -131,13 +131,23 @@ static void test_rc_switch_positions(void)
     TEST_ASSERT_FALSE(rcSwitchUp(1000, RC_LO, RC_HI, SW_THRESH));
 }
 
-// The safety property behind both switches: an absent channel reads 0, which
-// must resolve to down, so a lost receiver leaves fast mode and autonomy on
-// rather than latching the car slow or locking the Pi out.
-static void test_rc_switch_absent_channel_reads_down(void)
+static void test_rc_switch_down_positions(void)
+{
+    TEST_ASSERT_TRUE(rcSwitchDown(1000, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_TRUE(rcSwitchDown(1499, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchDown(SW_THRESH, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchDown(2000, RC_LO, RC_HI, SW_THRESH));
+}
+
+// The safety property behind both switches: an absent channel reads 0 and an
+// out-of-band one is implausible; both must read as neither position, so a
+// receiver without a transmitter never latches slow mode or manual override.
+static void test_rc_switch_absent_channel_reads_neither(void)
 {
     TEST_ASSERT_FALSE(rcSwitchUp(0, RC_LO, RC_HI, SW_THRESH));
     TEST_ASSERT_FALSE(rcSwitchUp(2500, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchDown(0, RC_LO, RC_HI, SW_THRESH));
+    TEST_ASSERT_FALSE(rcSwitchDown(2500, RC_LO, RC_HI, SW_THRESH));
 }
 
 // ----------------------- throttleToTargetMps ---------------------- //
@@ -299,7 +309,8 @@ int main(int, char **)
     RUN_TEST(test_hall_invalid_transitions_report_zero);
     RUN_TEST(test_rc_pulse_validity_band);
     RUN_TEST(test_rc_switch_positions);
-    RUN_TEST(test_rc_switch_absent_channel_reads_down);
+    RUN_TEST(test_rc_switch_down_positions);
+    RUN_TEST(test_rc_switch_absent_channel_reads_neither);
     RUN_TEST(test_setpoint_full_stick_hits_the_cap_exactly);
     RUN_TEST(test_setpoint_slow_mode_rescales_rather_than_clips);
     RUN_TEST(test_setpoint_just_past_deadband_starts_at_min);

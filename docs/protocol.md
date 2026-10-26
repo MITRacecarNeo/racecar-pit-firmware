@@ -157,11 +157,12 @@ values come from `config/config.h` unless noted.
 | `imu.model` | LSM9DS1 | IMU chip |
 | `imu.accel_range_g`, `imu.accel_rate_hz` | 8, 119 | accel full scale and configured rate |
 | `imu.gyro_range_dps`, `imu.mag_range_gauss` | 500, 8 | gyro and mag full scale |
+| `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |
 | `power.sensor` | INA226 | power sensor |
 | `power.shunt_ohm`, `power.max_current_a` | 0.0020, 8.0 | shunt and current range |
 | `power.avg_samples` | 16 | INA226 hardware averaging |
-| `power.poll_ms` | 1 | INA226 read period |
+| `power.poll_ms` | 10 | INA226 read period |
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
 | `i2c.clock_hz` | 400000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |

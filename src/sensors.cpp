@@ -120,8 +120,15 @@ void ReadIMUStates()
   }
   imu_ok = true;
 
+  uint32_t next_us = micros();
   while (true)
   {
+    while ((int32_t)(micros() - next_us) < 0)
+      threads.yield();
+    next_us += cfg::LSM9DS1_IMU::read_period_us;
+    if ((int32_t)(micros() - next_us) >= 0)
+      next_us = micros() + cfg::LSM9DS1_IMU::read_period_us;
+
     PROF_PERIOD(imu_loop);
     sensors_event_t a, m, g, temp;
     PROF_START(t_wait);
@@ -153,8 +160,6 @@ void ReadIMUStates()
     imuVals[7] = m.magnetic.y;
     imuVals[8] = m.magnetic.z;
     ImuMutex.unlock();
-
-    threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }
 
@@ -169,9 +174,9 @@ void RxReceive()
     for (uint8_t i = 0; i < cfg::FLYSKY_IA6B_RX::channel_count; i++)
       values[i] = ppm.latestValidChannelValue(i + 1, 0);
 
-    RxMutex.lock();
-    memcpy(channelVals, values, sizeof(channelVals));
-    RxMutex.unlock();
+    rc_channels.beginWrite();
+    memcpy(rc_channels.data().us, values, sizeof(values));
+    rc_channels.endWrite();
 
     threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }

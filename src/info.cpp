@@ -182,6 +182,7 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.integer("imu.accel_rate_hz", LSM9DS1_IMU::accel_rate_hz);
   w.integer("imu.gyro_range_dps", LSM9DS1_IMU::gyro_range_dps);
   w.integer("imu.mag_range_gauss", LSM9DS1_IMU::mag_range_gauss);
+  w.integer("imu.read_hz", (int32_t)(1000000UL / LSM9DS1_IMU::read_period_us));
   w.text("imu.accel_unit", "m/s2");
   w.text("imu.gyro_unit", "rad/s");
   w.text("imu.mag_unit", "uT");

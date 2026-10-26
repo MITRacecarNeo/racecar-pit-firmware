@@ -4,6 +4,113 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-017 - 2026-10-26
+
+### Setup
+Reference car on a block, all four wheels free, teleop running, gamepad and
+FS-i6 transmitter with iA6B receiver. Firmware A: `c1e3091` (drive loop in a
+thread, before sensor pacing). Firmware B: `c1e3091` plus the 1 kHz drive
+interrupt, paced sensors, and swA decoded as slow on the low pulse.
+
+### Hypothesis
+The drive interrupt leaves the drive path and the switch behavior unchanged;
+the wheels-free speed overshoot seen on 2026-10-26 predates it.
+
+### Method
+A recorder logged `/motor`, `/encoder/speed`, `/rc/channels`, `/rc/link`,
+`/joy` and `/battery/current` while the operator drove a scripted sequence:
+gamepad forward and reverse, steering, release of the enable button, RC
+override, both switches in both positions. The switch polarity was read by
+holding both levers up, then down, twice. The same full-stick gamepad and
+slow-mode RC holds ran on firmware A and B. Logs (not in git): `data/raw/drive_regression_20261026.csv`,
+`data/raw/drive_ab_old_20261026.csv`, `data/raw/drive_ab_new_20261026.csv`.
+
+### Parameters
+| Name | A | B | Unit |
+| ---- | - | - | ---- |
+| Gamepad full stick, peak speed | 1.89, 2.01, 2.07 | 1.84, 1.96, 1.94 | m/s |
+| Gamepad full stick, last 1.5 s of a 3 to 4 s hold | 1.35, 1.22, 1.24 | 1.20, 1.35, 1.21 | m/s |
+| Slow-mode RC full stick, peak / last 1.5 s | 1.90 / 1.26 | 1.95 / 1.19 | m/s |
+| Gamepad commanded with swD high: wheel speed | - | 0.00 (134 samples) | m/s |
+
+### Observations
+- Lever up (away from the operator) sends the low pulse on both switches,
+  lever down the high pulse; the FS-i6 starts only with every lever up and
+  will not power off while the receiver is on, so a no-signal case was not
+  reached.
+- On firmware A, swA up (low) gave fast mode, the opposite of the intended
+  default; swD behaved as intended (high, lever down, locks the Pi out).
+  Firmware B decodes swA low as slow; swD unchanged.
+- Gamepad forward and reverse, steering both ways, stop on releasing the
+  enable button, RC taking over from the gamepad, swD lockout and release,
+  slow-mode RC, and fast-mode RC all behaved as expected on B (operator
+  check and recorded speeds).
+- With the wheels free the closed loop peaks about twice the 1.0 m/s
+  setpoint and is still 0.2 to 0.35 m/s high after 3 to 4 s, on both A and
+  B. Fast-mode RC is open-loop PWM: a quarter stick reached 8.6 m/s.
+
+### Conclusion
+Supported. The drive interrupt keeps the drive and switch behavior; swA now
+starts in slow mode with the transmitter's default lever position. The
+wheels-free overshoot is the existing speed loop with no load; check on the
+floor with the speed-loop work.
+
+---
+
+## TL-016 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, 6 min after a reboot, fresh battery
+(8.20 V), transmitter off. Profiling build of `c1e3091` plus the drive loop
+in a 1 kHz IntervalTimer interrupt (priority 144, `Seqlock` for RC channels
+and the drive command), LSM9DS1 read every 4 ms, INA226 every 10 ms.
+
+### Hypothesis
+With the drive loop on a timer and the sensors paced, every timing target
+holds.
+
+### Method
+`scripts/profile_capture.py 60 --probe`, then
+`scripts/telemetry_probe.py 10 --runs 3` and the info reply. Pi CPU from
+`top` during the runs.
+
+### Parameters
+| Name | TL-015 | Timer drive, paced sensors | Unit |
+| ---- | ------ | -------------------------- | ---- |
+| `drive_loop` rate | 864.7 | 1000.0 | Hz |
+| `drive_loop` period mean / max | 1.16 / 2.72 | 1.000 / 1.000 | ms |
+| `tx_slot` rate | 200.0 | 200.0 | Hz |
+| `tx_slot` p99 / max | 6.45 / 6.48 | 5.60 / 5.57 | ms |
+| `imu_loop` / distinct IMU samples | 503 / 503 | 250.0 / 250 | per s |
+| `power_loop` | 964 | 100.0 | per s |
+| `cmd_to_pwm` mean / max | 10 / 428 | 755 / 999 | us |
+| `rx_loop` max | 2.79 | 1.65 | ms |
+| `irq_late` max | 0 | 0 | us |
+| Telemetry at the Pi (3 probe runs) | - | 197.1, 189.9, 196.7 | Hz |
+| Teensy-stamped gaps at the Pi, median / max | - | 5.43 / 84 to 85 | ms |
+
+### Observations
+- Every profiling target passed: telemetry rate, gap p99 and max, drive loop
+  mean and max, command to PWM, interrupt lateness. p99 values are 50 us bin
+  edges, so a p99 can read above the exact max.
+- `cmd_to_pwm` rose from 10 to 755 us mean: an accepted command now waits for
+  the next 1 ms tick instead of running in the thread after `UARTRx`.
+- Sensor values plausible (accel about 9.8 m/s^2 on z, gyro near 0, mag and
+  battery steady); info reply `imu.read_hz=250`, `power.poll_ms=10`,
+  `i2c.clock_hz=400000`, both sensors `ok`.
+- The firmware sent 200.0 frames/s with no gap over 5.57 ms, but the Pi
+  received 189.9 to 197.1 Hz: one gap of 84 to 85 ms (about 16 frames) per
+  10 s run in the Teensy-stamped stream, plus scattered drops. Load average
+  4.4, `pit_node` 50% and `imu_fusion_node` 42% of a core.
+
+### Conclusion
+Supported for the firmware. The remaining loss is on the Pi, between the
+serial read in `pit_node` and the best-effort subscriber; it needs counters in
+the driver. Driving checks (gamepad, RC, switches, stop on release) still to
+run with the drive loop in an interrupt.
+
+---
+
 ## TL-015 - 2026-10-25
 
 ### Setup

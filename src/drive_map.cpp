@@ -45,6 +45,11 @@ bool rcSwitchUp(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold)
   return rcPulseValid(pulse, lo, hi) && pulse >= threshold;
 }
 
+bool rcSwitchDown(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold)
+{
+  return rcPulseValid(pulse, lo, hi) && pulse < threshold;
+}
+
 float throttleToTargetMps(float motor, float deadband, float min_mps, float max_mps)
 {
   if (motor > 1.0f)

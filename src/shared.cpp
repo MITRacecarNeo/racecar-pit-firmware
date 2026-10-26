@@ -1,7 +1,8 @@
 #include "shared.h"
 
+Seqlock<DriveCommand> drive_cmd;
+
 Threads::Mutex CmdMutex;
-float cmd_setpoint[2] = {0.0f, 0.0f};
 bool dotmatrix_cmd[wire::dot_matrix_bytes] = {false};
 uint8_t led_cmd[cfg::RGB_LED_WS2812B::num_leds * 3] = {0};
 uint8_t system_state = 0;
@@ -13,8 +14,7 @@ bool piCommandFresh(uint32_t timeout_ms)
   return last != 0 && (micros() - last) < timeout_ms * 1000UL;
 }
 
-Threads::Mutex RxMutex;
-uint16_t channelVals[cfg::FLYSKY_IA6B_RX::channel_count] = {0};
+Seqlock<RcChannels> rc_channels;
 
 Threads::Mutex PowerMutex;
 float power_amps = 0.0f;

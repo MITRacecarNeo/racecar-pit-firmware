@@ -10,7 +10,7 @@ namespace prof
 {
     enum Period : uint8_t
     {
-        drive_loop, // DriveControl loop starts
+        drive_loop, // drive tick starts (1 kHz interrupt)
         tx_slot,    // telemetry frames sent
         rx_loop,    // UARTRx loop starts
         imu_loop,   // ReadIMUStates loop starts
@@ -23,7 +23,7 @@ namespace prof
 
     enum Section : uint8_t
     {
-        drive_body,      // DriveControl from channel copy to PWM write
+        drive_body,      // drive tick from channel read to PWM write
         imu_read,        // LSM9DS1 getEvent, bus held
         imu_bus_wait,    // ReadIMUStates waiting for I2CMutex
         power_read,      // INA226 current and voltage, bus held
@@ -59,7 +59,7 @@ namespace prof
     void section(Section id, uint32_t start); // records now() - start
     void count(Counter id);
     void commandAccepted();               // UARTRx, after a command is applied
-    void commandUsed();                   // DriveControl, after the PWM write of a Pi command
+    void commandUsed();                   // drive tick, after the PWM write of a Pi command
 }
 
 #ifdef RCN_PROFILE

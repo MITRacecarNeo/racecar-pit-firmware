@@ -69,6 +69,22 @@ driver; there is no 0.8.0 firmware release.
   0.5 m/s, `max_speed_mps` 5.0 -> 1.0 m/s. The field build raises the ceiling
   to 4.0 m/s. Slow mode stays at 1.0 m/s.
 
+- The drive loop runs in a 1 kHz IntervalTimer interrupt instead of a
+  thread, so it keeps its period whatever the threads do. The RC channels and
+  the Pi drive command it reads are shared through sequence counters
+  (`src/seqlock.h`) in place of `RxMutex` and the `CmdMutex` setpoints.
+- The LSM9DS1 is read every 4 ms (250 Hz) and the INA226 every 10 ms; each
+  read blocks about 1.1 ms and 0.28 ms on the bus. New info key
+  `imu.read_hz`.
+- `UARTRx` assembles command frames from the bytes that have arrived
+  (`src/command_framer.*`) instead of waiting in `readBytes` for a whole
+  frame.
+- The `serial_plot` trace prints from `loop()`.
+- swA slow mode is now the low pulse (lever up on the FS-i6, its start
+  position); high is fast. A receiver with no signal reads fast. swD is
+  unchanged: high (lever down) is manual override, low or no signal leaves the
+  Pi in control.
+
 ### Fixed
 - `cfg::I2C::clock_hz` never took effect: Adafruit BusIO's `begin()` calls
   `Wire.begin()`, which resets the bus to 100 kHz. The clock is applied again

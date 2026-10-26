@@ -26,8 +26,8 @@ void setup()
   SPI.begin();
 
   initHallEncoder();
+  startDriveControl();
 
-  threads.addThread(DriveControl);
   threads.addThread(RxReceive);
   threads.addThread(ReadCurrAndVolt);
   threads.addThread(ReadIMUStates);
@@ -42,6 +42,7 @@ void setup()
 void loop()
 {
   updateLedStrip();
+  printDriveTrace();
   PROF_REPORT();
   threads.delay(cfg::TEENSY_THREADS::loop_tick_ms);
 }

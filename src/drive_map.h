@@ -20,6 +20,9 @@ bool rcPulseValid(uint16_t pulse, uint16_t lo, uint16_t hi);
 // receiver falls back to the permissive position rather than latching a switch.
 bool rcSwitchUp(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold);
 
+// The other position. An implausible pulse reads as neither up nor down.
+bool rcSwitchDown(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold);
+
 // Normalized [-1,1] throttle to a signed speed setpoint. Magnitudes past the
 // deadband span min_mps to max_mps, so the first usable stick position already
 // clears the ESC deadband and full stick lands on max_mps exactly. Passing a

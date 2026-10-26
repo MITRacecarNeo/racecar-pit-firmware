@@ -15,9 +15,8 @@ namespace
 {
   void fillTelemetry(TXPacket &pkt)
   {
-    RxMutex.lock();
-    memcpy(pkt.RxReceiver, channelVals, sizeof(pkt.RxReceiver));
-    RxMutex.unlock();
+    const RcChannels rc = readShared(rc_channels);
+    memcpy(pkt.RxReceiver, rc.us, sizeof(pkt.RxReceiver));
 
     ImuMutex.lock();
     memcpy(pkt.IMU, imuVals, sizeof(pkt.IMU));
@@ -130,9 +129,8 @@ namespace
 {
   void applyCommand(const RxPacket &rx)
   {
+    drive_cmd.write({rx.ServoAng, rx.MotorSpeed});
     CmdMutex.lock();
-    cmd_setpoint[0] = rx.ServoAng;
-    cmd_setpoint[1] = rx.MotorSpeed;
     memcpy(dotmatrix_cmd, rx.DotMatrix, sizeof(dotmatrix_cmd));
     memcpy(led_cmd, rx.LED, sizeof(led_cmd));
     system_state = rx.SystemState;

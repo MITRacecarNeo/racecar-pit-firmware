@@ -1,8 +1,8 @@
 #include "drive.h"
 
 #include <Arduino.h>
+#include <IntervalTimer.h>
 #include <Servo.h>
-#include <TeensyThreads.h>
 
 #include "config.h"
 #include "drive_map.h"
@@ -163,48 +163,57 @@ namespace
     return rcPulseValid(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max);
   }
 
-  // Defaults to the permissive position when the channel is absent, so a lost
-  // receiver never leaves the car slow or locked out.
+  // An absent or out-of-band channel reads as neither position.
   bool switchUp(uint16_t pulse)
   {
     return rcSwitchUp(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max,
                       cfg::FLYSKY_IA6B_RX::sw_threshold);
   }
+
+  bool switchDown(uint16_t pulse)
+  {
+    return rcSwitchDown(pulse, cfg::AUTO_DRIVE::rc_valid_min, cfg::AUTO_DRIVE::rc_valid_max,
+                        cfg::FLYSKY_IA6B_RX::sw_threshold);
+  }
 }
 
 // --------------------------- Actuation ---------------------------- //
 
-void DriveControl()
+namespace
 {
-  static Servo steerServo, throtMot;
-  steerServo.attach(cfg::SERVO_D135F::servo_pin);
-  throtMot.attach(cfg::ESC_10BL60_G2::motor_pin);
+  Servo steerServo, throtMot;
+  IntervalTimer drive_timer;
+  uint32_t last_tick_us = 0;
 
-  steerServo.writeMicroseconds(cfg::SERVO_D135F::angle_pwm_neutral);
-  throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::speed_pwm_neutral);
+  // Last values that read cleanly, used when a write is in progress.
+  RcChannels rc_last = {};
+  DriveCommand cmd_last = {0.0f, 0.0f};
 
-  uint32_t lastUs = micros();
+  // For the serial trace, printed from loop().
+  volatile float trace_target_mps = 0.0f;
+  volatile float trace_measured_mps = 0.0f;
+  volatile uint16_t trace_pwm = cfg::ESC_10BL60_G2::speed_pwm_neutral;
 
-  while (true)
+  void driveTick()
   {
     PROF_PERIOD(drive_loop);
     PROF_START(t_body);
     const uint32_t now = micros();
-    const float dt = (float)(now - lastUs) * 1e-6f;
-    lastUs = now;
+    const float dt = (float)(now - last_tick_us) * 1e-6f;
+    last_tick_us = now;
 
-    uint16_t ch[cfg::FLYSKY_IA6B_RX::channel_count];
-    RxMutex.lock();
-    memcpy(ch, channelVals, sizeof(ch));
-    RxMutex.unlock();
-
+    rc_channels.tryRead(rc_last);
+    const uint16_t *ch = rc_last.us;
     const uint16_t steer_ch = ch[cfg::FLYSKY_IA6B_RX::ch_steer];
     const uint16_t throt_ch = ch[cfg::FLYSKY_IA6B_RX::ch_throt];
 
     // An unplugged or out-of-range receiver reads outside the pulse band; that
     // is no RC, not a command.
     const bool rc_signal = pulseValid(steer_ch) && pulseValid(throt_ch);
-    const bool slow_mode = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_speed_mode]);
+    // Low pulse = lever up on the FS-i6, the position it starts in. swA low is
+    // slow; swD high is manual override. No receiver signal reads as neither:
+    // fast, and the Pi in control.
+    const bool slow_mode = switchDown(ch[cfg::FLYSKY_IA6B_RX::ch_speed_mode]);
     const bool override_on = switchUp(ch[cfg::FLYSKY_IA6B_RX::ch_manual_override]);
 
     uint16_t rc_steer = cfg::SERVO_D135F::angle_pwm_neutral;
@@ -226,7 +235,7 @@ void DriveControl()
     rc_driving = rc_active;
 
     // Sticks centered or no receiver: a fresh Pi command drives, a stale one
-    // falls to neutral. swD up locks the Pi out entirely, so centered sticks
+    // falls to neutral. Override locks the Pi out entirely, so centered sticks
     // stop the car rather than handing it back to autonomy.
     const bool pi_drive = !rc_active && !override_on && piCommandFresh(cfg::UART::rx_timeout);
 
@@ -238,11 +247,9 @@ void DriveControl()
     }
     else if (pi_drive)
     {
-      CmdMutex.lock();
-      const float servo = cmd_setpoint[0];
-      pi_motor = cmd_setpoint[1];
-      CmdMutex.unlock();
-      steer_out = mapNormToPwm(servo, cfg::SERVO_D135F::angle_pwm_min,
+      drive_cmd.tryRead(cmd_last);
+      pi_motor = cmd_last.throttle;
+      steer_out = mapNormToPwm(cmd_last.steer, cfg::SERVO_D135F::angle_pwm_min,
                                cfg::SERVO_D135F::angle_pwm_neutral, cfg::SERVO_D135F::angle_pwm_max);
     }
 
@@ -289,16 +296,32 @@ void DriveControl()
     if (pi_drive)
       PROF_CMD_USED();
 
-    if (cfg::DEBUG::serial_plot)
-    {
-      Serial.print(">Target_MPS:");
-      Serial.println(target_mps);
-      Serial.print(">Measured_MPS:");
-      Serial.println(measured_mps);
-      Serial.print(">Sent_PWM:");
-      Serial.println(throt_out);
-    }
-
-    threads.delay(cfg::TEENSY_THREADS::tick_ms);
+    trace_target_mps = target_mps;
+    trace_measured_mps = measured_mps;
+    trace_pwm = throt_out;
   }
+}
+
+void startDriveControl()
+{
+  steerServo.attach(cfg::SERVO_D135F::servo_pin);
+  throtMot.attach(cfg::ESC_10BL60_G2::motor_pin);
+  steerServo.writeMicroseconds(cfg::SERVO_D135F::angle_pwm_neutral);
+  throtMot.writeMicroseconds(cfg::ESC_10BL60_G2::speed_pwm_neutral);
+
+  last_tick_us = micros();
+  drive_timer.priority(cfg::DRIVE_LOOP::irq_priority);
+  drive_timer.begin(driveTick, cfg::DRIVE_LOOP::period_us);
+}
+
+void printDriveTrace()
+{
+  if (!cfg::DEBUG::serial_plot)
+    return;
+  Serial.print(">Target_MPS:");
+  Serial.println(trace_target_mps);
+  Serial.print(">Measured_MPS:");
+  Serial.println(trace_measured_mps);
+  Serial.print(">Sent_PWM:");
+  Serial.println(trace_pwm);
 }

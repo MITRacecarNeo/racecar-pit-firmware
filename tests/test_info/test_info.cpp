@@ -130,7 +130,8 @@ static void test_payload_reports_the_compiled_config(void)
     TEST_ASSERT_EQUAL_STRING("12", valueOf("encoder.edges_per_motor_rev"));
     TEST_ASSERT_EQUAL_STRING("0.0720", valueOf("drivetrain.wheel_diameter_m"));
     TEST_ASSERT_EQUAL_STRING("16", valueOf("power.avg_samples"));
-    TEST_ASSERT_EQUAL_STRING("1", valueOf("power.poll_ms"));
+    TEST_ASSERT_EQUAL_STRING("10", valueOf("power.poll_ms"));
+    TEST_ASSERT_EQUAL_STRING("250", valueOf("imu.read_hz"));
     TEST_ASSERT_EQUAL_STRING("400000", valueOf("i2c.clock_hz"));
     TEST_ASSERT_EQUAL_STRING("rad/s", valueOf("imu.gyro_unit"));
 }
