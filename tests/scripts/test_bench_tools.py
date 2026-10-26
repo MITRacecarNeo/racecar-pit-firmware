@@ -44,6 +44,12 @@ def test_gap_stats_needs_three_stamps():
     assert telemetry_probe.gap_stats([0.0, 0.005]) is None
 
 
+def test_message_rate_ignores_the_wait_before_the_first_message():
+    arrivals = [3.0 + i * 0.005 for i in range(1401)]
+    assert telemetry_probe.message_rate(arrivals) == pytest.approx(200.0)
+    assert telemetry_probe.message_rate([1.0]) == 0.0
+
+
 def test_count_changes():
     assert telemetry_probe.count_changes([]) == 0
     assert telemetry_probe.count_changes([1, 1, 2, 2, 2, 3, 1]) == 4

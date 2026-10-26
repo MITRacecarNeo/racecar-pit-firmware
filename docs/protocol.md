@@ -166,7 +166,11 @@ values come from `config/config.h` unless noted.
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
 | `i2c.clock_hz` | 400000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |
+| `watchdog.timeout_ms` | 100 | watchdog reset after this long without a refresh |
 | `status.imu`, `status.power` | ok | `missing` until the sensor answers |
+| `status.watchdog` | armed | `starting` until every context has run once after boot; `off` when disabled |
+| `status.last_reset` | watchdog | cause of the last boot: `watchdog`, `software`, `reset`, or `unknown` |
+| `status.reset_flags` | 128 | `SRC_SRSR` at boot (bit 7 watchdog 3, bit 1 software or lockup, bit 0 reset pin) |
 
 ## Compatibility
 

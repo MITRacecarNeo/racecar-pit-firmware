@@ -13,7 +13,7 @@ static char payload[info::payload_max_bytes];
 
 static size_t buildPayload(bool imu_ok = true, bool power_ok = true)
 {
-    const InfoStatus status = {imu_ok, power_ok};
+    const InfoStatus status = {imu_ok, power_ok, "watchdog", 0x80, true};
     return writeFirmwareInfo(status, payload, sizeof(payload));
 }
 
@@ -141,6 +141,10 @@ static void test_payload_reports_sensor_status(void)
     buildPayload(true, false);
     TEST_ASSERT_EQUAL_STRING("ok", valueOf("status.imu"));
     TEST_ASSERT_EQUAL_STRING("missing", valueOf("status.power"));
+    TEST_ASSERT_EQUAL_STRING("armed", valueOf("status.watchdog"));
+    TEST_ASSERT_EQUAL_STRING("watchdog", valueOf("status.last_reset"));
+    TEST_ASSERT_EQUAL_STRING("128", valueOf("status.reset_flags"));
+    TEST_ASSERT_EQUAL_STRING("100", valueOf("watchdog.timeout_ms"));
 }
 
 static void test_payload_keys_are_unique(void)

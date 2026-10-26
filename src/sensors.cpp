@@ -10,13 +10,14 @@
 
 #include "config.h"
 #include "profile.h"
+#include "watchdog.h"
 #include "shared.h"
 
 namespace
 {
   // Pause between begin() attempts on a missing sensor, with the bus released
-  // so the other sensor keeps running.
-  constexpr uint32_t sensor_retry_ms = 100;
+  // so the other sensor keeps running; well inside the watchdog timeout.
+  constexpr uint32_t sensor_retry_ms = 20;
 
   using Lsm = Adafruit_LSM9DS1;
 
@@ -70,12 +71,15 @@ void ReadCurrAndVolt()
     I2CMutex.unlock();
     if (found)
       break;
+    wdt::beat(wdt::power);
     threads.delay(sensor_retry_ms);
   }
   power_ok = true;
 
   while (true)
   {
+    wdt::beat(wdt::power);
+    WDT_TEST_HANG('p');
     PROF_PERIOD(power_loop);
     PROF_START(t_wait);
     I2CMutex.lock();
@@ -116,6 +120,7 @@ void ReadIMUStates()
     I2CMutex.unlock();
     if (found)
       break;
+    wdt::beat(wdt::imu);
     threads.delay(sensor_retry_ms);
   }
   imu_ok = true;
@@ -123,6 +128,8 @@ void ReadIMUStates()
   uint32_t next_us = micros();
   while (true)
   {
+    wdt::beat(wdt::imu);
+    WDT_TEST_HANG('i');
     while ((int32_t)(micros() - next_us) < 0)
       threads.yield();
     next_us += cfg::LSM9DS1_IMU::read_period_us;
@@ -169,6 +176,8 @@ void RxReceive()
 
   while (true)
   {
+    wdt::beat(wdt::rc_rx);
+    WDT_TEST_HANG('c');
     PROF_PERIOD(rc_loop);
     uint16_t values[cfg::FLYSKY_IA6B_RX::channel_count];
     for (uint8_t i = 0; i < cfg::FLYSKY_IA6B_RX::channel_count; i++)

@@ -62,6 +62,18 @@ def gap_stats(stamps: Sequence[float]) -> GapStats | None:
     )
 
 
+def message_rate(arrivals: Sequence[float]) -> float:
+    """Messages per second between the first and the last arrival.
+
+    Measured from the first message rather than the start of the run, since
+    ROS discovery can take seconds after a flash or restart.
+    """
+    if len(arrivals) < 2:
+        return 0.0
+    span = arrivals[-1] - arrivals[0]
+    return (len(arrivals) - 1) / span if span > 0 else 0.0
+
+
 def count_changes(values: Sequence[Any]) -> int:
     """Number of values that differ from the one before (the first counts)."""
     changes = 0
@@ -90,7 +102,7 @@ def probe(seconds: float) -> dict[str, Any]:
     rclpy.init()
     node = rclpy.create_node("telemetry_probe")
     qos = QoSProfile(depth=50, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-    counts = dict.fromkeys(TOPICS, 0)
+    arrivals: dict[str, list[float]] = {name: [] for name in TOPICS}
     last: dict[str, Any] = {}
     stamps: list[float] = []
     imu_keys: list[tuple[float, float, float]] = []
@@ -98,7 +110,7 @@ def probe(seconds: float) -> dict[str, Any]:
 
     def callback(name: str):
         def on_msg(msg: Any) -> None:
-            counts[name] += 1
+            arrivals[name].append(time.monotonic())
             last[name] = msg
             if name == "imu":
                 stamps.append(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
@@ -124,7 +136,7 @@ def probe(seconds: float) -> dict[str, Any]:
     rclpy.try_shutdown()
     return {
         "seconds": seconds,
-        "rates": {name: n / seconds for name, n in counts.items()},
+        "rates": {name: message_rate(times) for name, times in arrivals.items()},
         "gaps": gap_stats(stamps),
         "distinct_imu": count_changes(imu_keys) / seconds,
         "distinct_volt": count_changes(volts) / seconds,

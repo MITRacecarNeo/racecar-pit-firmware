@@ -30,6 +30,13 @@ driver; there is no 0.8.0 firmware release.
   lateness on USB serial; `scripts/profile_capture.py` records and checks
   them, and `scripts/telemetry_probe.py` measures telemetry at the Pi. Info
   key `fw.profile`.
+- Watchdog (RTWDOG, 100 ms): refreshed by the drive tick only while every
+  thread, `loop()`, and the drive tick itself run; a hang resets the Teensy,
+  which boots with servo and ESC at neutral. Armed after boot once every
+  context has run. Info keys `watchdog.timeout_ms`, `status.watchdog`,
+  `status.last_reset`, `status.reset_flags`. Test build `teensy41_wdt_test`.
+- `scripts/upload.py`, the upload command: soft reboot, write, and retry a
+  failed write, so `pio run -t upload` completes on the first command.
 - `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
   `data/`.
 - `cfg::I2C::clock_hz`, 400 kHz (the bus ran at 100 kHz before),

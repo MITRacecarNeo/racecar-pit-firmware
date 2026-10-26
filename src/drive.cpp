@@ -7,6 +7,7 @@
 #include "config.h"
 #include "drive_map.h"
 #include "profile.h"
+#include "watchdog.h"
 #include "shared.h"
 
 // ------------------------- Hall encoder --------------------------- //
@@ -196,6 +197,12 @@ namespace
 
   void driveTick()
   {
+#ifdef RCN_WDT_TEST
+    if (wdt::test_hang == 'd')
+      return;
+#endif
+    wdt::beat(wdt::drive_tick);
+    wdt::tick();
     PROF_PERIOD(drive_loop);
     PROF_START(t_body);
     const uint32_t now = micros();

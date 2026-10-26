@@ -12,7 +12,7 @@ namespace prof
   namespace
   {
     const char *const period_names[period_count] = {
-        "drive_loop", "tx_slot", "rx_loop", "imu_loop", "power_loop", "rc_loop", "dot_loop", "led_loop"};
+        "drive_loop", "tx_slot", "rx_loop", "imu_loop", "power_loop", "rc_loop", "dot_loop", "led_loop", "wdt_refresh"};
     const char *const section_names[section_count] = {
         "drive_body", "imu_read", "imu_bus_wait", "power_read", "power_bus_wait",
         "led_show", "tx_send", "rx_frame", "cmd_to_pwm", "irq_late"};

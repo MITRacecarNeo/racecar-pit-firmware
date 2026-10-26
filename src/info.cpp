@@ -201,8 +201,12 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.integer("display.dot_rows", MAX_7219_DOT_MATRIX::rows);
   w.integer("display.dot_cols", MAX_7219_DOT_MATRIX::cols);
 
+  w.integer("watchdog.timeout_ms", (int32_t)WATCHDOG::timeout_ms);
   w.text("status.imu", status.imu_ok ? "ok" : "missing");
   w.text("status.power", status.power_ok ? "ok" : "missing");
+  w.text("status.watchdog", !WATCHDOG::enabled ? "off" : status.watchdog_armed ? "armed" : "starting");
+  w.text("status.last_reset", status.last_reset ? status.last_reset : "unknown");
+  w.integer("status.reset_flags", (int32_t)status.reset_flags);
 
   return w.length();
 }

@@ -9,10 +9,12 @@
 #include "drive.h"
 #include "link.h"
 #include "profile.h"
+#include "watchdog.h"
 #include "sensors.h"
 
 void setup()
 {
+  wdt::captureResetCause();
   initLedStrip();
 
   Wire.begin();
@@ -41,6 +43,17 @@ void setup()
 
 void loop()
 {
+#ifdef RCN_WDT_TEST
+  // Test build: a character on USB serial stops one context (t, r, p, i, c,
+  // m, d for the drive tick, l for loop itself).
+  if (Serial.available() > 0)
+    wdt::test_hang = (char)Serial.read();
+  while (wdt::test_hang == 'l')
+  {
+  }
+#endif
+  wdt::beat(wdt::main_loop);
+  wdt::poll();
   updateLedStrip();
   printDriveTrace();
   PROF_REPORT();

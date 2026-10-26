@@ -40,6 +40,7 @@ I/O. There is no RTOS and no dynamic allocation after boot.
 | `src/sensors.{h,cpp}` | `ReadCurrAndVolt`, `ReadIMUStates`, `RxReceive` | INA226, Adafruit LSM9DS1, PPM-reader |
 | `src/displays.{h,cpp}` | `DotMatrix` thread, `updateLedStrip` | MD_Parola, FastLED, `battery` |
 | `src/main.cpp` | Boot: peripherals, interrupts, thread launch | all threads |
+| `src/watchdog.{h,cpp}`, `src/heartbeat.h` | RTWDOG supervision of every context; reset cause | `Heartbeat` (Arduino-free) |
 | `src/profile.{h,cpp}`, `src/prof_stats.{h,cpp}` | Profiling hooks and statistics; active only with `RCN_PROFILE` | cycle counter, IntervalTimer |
 | `scripts/pit_uart.py` | Bench tool: drives the link from the Pi without ROS | numpy, pyserial |
 
@@ -173,6 +174,32 @@ fast-mode RC keeps the direct PWM path and its instant override.
 Command frames are received, CRC-checked, and stored regardless of either
 switch; override is applied at actuation only. The Pi therefore never blocks on
 the Teensy, and reading the switches out of `/rc/channels` is optional.
+
+## Watchdog
+
+`src/watchdog.{h,cpp}` runs the RT1062 RTWDOG (watchdog 3) from its 32 kHz
+low-power clock with `cfg::WATCHDOG::timeout_ms` (100 ms). Each context sets
+its bit in a `Heartbeat` (`src/heartbeat.h`) once per loop: the drive tick,
+`UARTTx`, `UARTRx`, `RxReceive`, `ReadIMUStates`, `ReadCurrAndVolt`,
+`DotMatrix`, and `loop()`. The drive tick refreshes the watchdog only once
+every bit is set, then clears them, so a stopped context, or a stopped drive
+tick, ends the refreshes and the chip resets 100 to 150 ms later. It boots as
+at power-on, servo and ESC at neutral.
+
+`loop()` arms the watchdog once every context has run, after `setup()`, so
+boot and sensor start never trip it. A sensor missing at boot keeps beating
+from its 20 ms retry loop. The slowest context, `DotMatrix`, sets the refresh
+rate (20 Hz, 51 ms worst gap measured), half the timeout.
+
+`setup()` reads `SRC_SRSR` first, keeps the cause for the info reply
+(`status.last_reset`, `status.reset_flags`), and clears it. The watchdog does
+not run while the HalfKay bootloader is active, so uploads work with it
+armed.
+
+`pio run -e teensy41_wdt_test` builds a test firmware (profiling on) where one
+character on USB serial stops one context: `t` telemetry, `r` command
+receive, `p` INA226, `i` LSM9DS1, `c` RC receive, `m` dot matrix, `d` drive
+tick, `l` `loop()`. Never ship it.
 
 ## Profiling build
 

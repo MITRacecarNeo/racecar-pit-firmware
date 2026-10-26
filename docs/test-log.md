@@ -4,6 +4,109 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-019 - 2026-10-26
+
+### Setup
+Reference car on a block, teleop running, transmitter off. Firmware `dee5186`
+plus the watchdog (RTWDOG, 32 kHz clock), built three ways: the test build
+(profiling plus hang commands) with a 2000 ms timeout, the same with the
+shipping 100 ms, and the plain build.
+
+### Hypothesis
+A stopped context resets the Teensy within the timeout plus one heartbeat
+round; normal running never resets it; uploads keep working with it armed.
+
+### Method
+1. 2000 ms build: soft reboot into HalfKay and watch the USB ID for 15 s
+   without writing.
+2. 100 ms build: stop each of the eight contexts in turn from USB serial; time
+   the USB drop and read the info reply after the reboot.
+3. Reset latency: hang INA226, LSM9DS1 and dot matrix while counting telemetry
+   at the Pi; latency = last frame after the command.
+4. 120 s profiling soak with nothing stopped; any reset restarts the report
+   clock.
+5. Three uploads of the plain build through `scripts/upload.py`, each from
+   firmware with the watchdog armed.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Timeout | 100 | ms |
+| Time in HalfKay with a 2000 ms watchdog armed | 15 (no reset) | s |
+| Contexts stopped / reset by the watchdog | 8 / 8 | - |
+| Reset latency from telemetry (INA226, LSM9DS1, dot matrix) | 144, 149, 144 | ms |
+| USB drop after the command, host side | 256 to 418 | ms |
+| Watchdog refreshes | 20.0 | per s |
+| Refresh gap max | 51.0 | ms |
+| Soak | 120.6 s, 0 resets | - |
+| Uploads with the watchdog armed | 3 of 3 | - |
+
+### Observations
+- The watchdog does not run in HalfKay: the board stayed in the bootloader
+  for 15 s with a 2000 ms timeout armed, and the write from it succeeded.
+- Every stopped context (telemetry, command receive, INA226, LSM9DS1, RC
+  receive, dot matrix, drive tick, `loop()`) reset the Teensy;
+  `status.last_reset=watchdog`, `status.reset_flags=128` after each.
+- About 3 s after a watchdog reset the reply still read
+  `status.watchdog=starting`; later reads `armed`. No reset loop: the board
+  stayed up for 8 s after the last test.
+- The host sees the USB drop 100 to 270 ms after the telemetry stops: disconnect
+  detection, not firmware time.
+- Soak: drive loop 1000.0 Hz, telemetry 200.0 Hz (p99 5.9 ms); refresh rate
+  set by `DotMatrix` (50 ms loop).
+- Uploads still fail on the first write and succeed on the retry, with or
+  without the watchdog.
+
+### Conclusion
+Supported. Reset 100 to 150 ms after any context stops; no false reset in
+120 s; uploads unaffected. Margin is 2x the slowest context: a context added
+later with a loop over 50 ms needs the timeout raised.
+
+---
+
+## TL-018 - 2026-10-26
+
+### Setup
+Reference car, Teensy on the Pi's USB (bus 3), PJRC udev rule installed,
+firmware `dee5186`. PlatformIO `teensy-cli` upload: `teensy_reboot -s`, then
+`teensy_loader_cli -mmcu=TEENSY41 -w -s -v`.
+
+### Hypothesis
+The first upload fails because the loader opens the HalfKay bootloader before
+udev has applied the PJRC rule's permissions.
+
+### Method
+One upload with `udevadm monitor` (usb, hidraw, tty) and timestamped loader
+output. Then three cycles of: soft reboot, wait for HalfKay, wait 1.5 s,
+`teensy_loader_cli` without its own reboot. Then three uploads through
+`scripts/upload.py`.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Soft reboot to "Found HalfKay" | 0.9 | s |
+| "Found HalfKay" to "error writing" | 0.57 | s |
+| HalfKay HID node added to unbound by the loader | 13 | ms |
+| Upload through the script | 14.5 to 14.9 | s |
+
+### Observations
+- udev applied the rule to the bootloader's USB device before the loader
+  claimed it; the bootloader stayed enumerated through the failed write (no
+  further USB events).
+- Waiting 1.5 s after the bootloader appeared did not help: 2 of 2 writes after
+  a soft reboot failed. A write to a bootloader left over from a failed
+  attempt succeeded every time (8 of 8 on 2026-10-25 and 2026-10-26).
+- `scripts/upload.py`: 3 of 3 uploads succeeded on attempt 2.
+
+### Conclusion
+Permission race not supported. The first write after a soft reboot from the
+running firmware fails deterministically; the failed write leaves a
+bootloader that accepts the next one. Cause not traced: something the firmware
+leaves running across the soft reboot is a candidate. The upload script
+retries, which makes uploads complete on one command.
+
+---
+
 ## TL-017 - 2026-10-26
 
 ### Setup

@@ -18,6 +18,7 @@ namespace prof
         rc_loop,    // RxReceive loop starts
         dot_loop,   // DotMatrix loop starts
         led_loop,   // loop() calls of updateLedStrip
+        wdt_refresh, // watchdog refreshes
         period_count
     };
 

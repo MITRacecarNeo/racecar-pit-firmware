@@ -208,6 +208,18 @@ namespace cfg
         constexpr uint8_t info_request = 0x20;     // send info chunks until the Pi clears it
     }
 
+    namespace WATCHDOG
+    {
+        constexpr bool enabled = true;
+        // Reset after this long without a refresh. Every context must beat
+        // within it; the slowest, DotMatrix, loops every 50 ms.
+#ifdef RCN_WDT_TIMEOUT_MS
+        constexpr uint32_t timeout_ms = RCN_WDT_TIMEOUT_MS;
+#else
+        constexpr uint32_t timeout_ms = 100;
+#endif
+    }
+
     namespace DRIVE_LOOP
     {
         constexpr uint32_t period_us = 1000; // drive tick, IntervalTimer

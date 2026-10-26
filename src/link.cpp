@@ -9,6 +9,7 @@
 #include "info.h"
 #include "packets.h"
 #include "profile.h"
+#include "watchdog.h"
 #include "shared.h"
 
 namespace
@@ -68,7 +69,7 @@ namespace
   private:
     void rebuild()
     {
-      const InfoStatus status = {imu_ok, power_ok};
+      const InfoStatus status = {imu_ok, power_ok, wdt::lastResetCause(), wdt::resetFlags(), wdt::armed()};
       const size_t n = writeFirmwareInfo(status, payload_, sizeof(payload_));
       const uint16_t crc = crc16_ccitt((const uint8_t *)payload_, n);
       if (built_ && (n != len_ || crc != crc_))
@@ -100,6 +101,8 @@ void UARTTx()
 
   while (true)
   {
+    wdt::beat(wdt::telemetry);
+    WDT_TEST_HANG('t');
     const uint32_t now = micros();
     if ((int32_t)(now - next) >= 0)
     {
@@ -146,6 +149,8 @@ void UARTRx()
   while (true)
   {
     PROF_PERIOD(rx_loop);
+    wdt::beat(wdt::command_rx);
+    WDT_TEST_HANG('r');
     // Take only what has arrived; a frame spans several turns of this thread.
     while (Serial1.available() > 0)
     {

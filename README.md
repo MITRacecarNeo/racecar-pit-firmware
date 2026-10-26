@@ -299,7 +299,10 @@ pio run -t upload    # flash over USB (Teensy on /dev/ttyACM0)
 ```
 
 If `pio` is not on PATH it lives in the PlatformIO virtualenv, usually
-`~/.platformio/penv/bin/pio`. The platform and every library are pinned in
+`~/.platformio/penv/bin/pio`. The upload runs `scripts/upload.py`: on this
+board the first write after a soft reboot fails, so the script retries and
+prints the attempt that succeeded. Linux needs PJRC's `00-teensy.rules` in
+`/etc/udev/rules.d/` (a copy ships in PlatformIO's `tool-teensy` package). The platform and every library are pinned in
 `platformio.ini`, so one commit always builds the same firmware. The build
 embeds the short commit and a dirty flag (`scripts/build_flags.py`); the info
 reply reports both.
@@ -344,6 +347,17 @@ python3 scripts/telemetry_probe.py 10 --runs 3        # telemetry as pit_node pu
 The profiling build reports thread periods, section timings, command-to-PWM
 latency, and interrupt lateness on the USB serial port once per second; see
 `docs/architecture.md`. Flash the plain build (`pio run -t upload`) afterward.
+
+### Watchdog test
+
+```sh
+pio run -e teensy41_wdt_test -t upload   # test firmware; never ship it
+```
+
+Sending one character on the USB serial port (`/dev/ttyACM0`) stops one
+context; the watchdog resets the Teensy within about 150 ms and the info reply
+then reads `status.last_reset=watchdog`. The letters are listed in
+`docs/architecture.md`. Flash the plain build afterward.
 
 Hardware runs are recorded in `docs/test-log.md`.
 

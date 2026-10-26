@@ -8,6 +8,7 @@
 #include "battery.h"
 #include "config.h"
 #include "profile.h"
+#include "watchdog.h"
 #include "shared.h"
 
 namespace
@@ -37,6 +38,8 @@ void DotMatrix()
   while (true)
   {
     PROF_PERIOD(dot_loop);
+    wdt::beat(wdt::dot_matrix);
+    WDT_TEST_HANG('m');
     static bool bmp[wire::dot_matrix_bytes];
     CmdMutex.lock();
     memcpy(bmp, dotmatrix_cmd, sizeof(bmp));

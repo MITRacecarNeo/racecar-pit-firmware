@@ -16,6 +16,9 @@ struct InfoStatus
 {
     bool imu_ok;
     bool power_ok;
+    const char *last_reset; // "watchdog", "software", "reset", "unknown"
+    uint32_t reset_flags;   // SRC_SRSR at boot
+    bool watchdog_armed;
 };
 
 // Appends "key=value\n" lines to a fixed buffer. Values are formatted without
