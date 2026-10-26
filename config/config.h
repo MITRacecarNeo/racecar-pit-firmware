@@ -36,8 +36,13 @@ namespace cfg
     {
         constexpr uint32_t usb_baud = 115200;
         // Teleplot trace of the speed loop on USB serial, printed from loop()
-        // at its 25 ms tick.
+        // at its 25 ms tick; lines are skipped while nothing reads the port.
+        // Build with -DRCN_SERIAL_PLOT to turn it on.
+#ifdef RCN_SERIAL_PLOT
+        constexpr bool serial_plot = true;
+#else
         constexpr bool serial_plot = false;
+#endif
     }
 
     namespace I2C
@@ -177,8 +182,9 @@ namespace cfg
         constexpr uint32_t stop_timeout_us = 30000; // no hall edge in this window -> RPM 0
         constexpr uint8_t pole_pairs = 2;
         constexpr uint8_t hall_states_per_erev = 6;
-        constexpr uint8_t rpm_window = 5;       // hall intervals averaged
+        constexpr uint8_t rpm_window = 5;       // hall intervals, median taken
         constexpr float rpm_filter_alpha = 0.8; // weight on the new sample
+        constexpr uint8_t dir_confirm_transitions = 2; // agreeing edges before a reversal counts
     }
 
     namespace AUTO_DRIVE
@@ -265,24 +271,24 @@ namespace cfg
         constexpr float slow_speed_mps = 1.0f;
 
         constexpr float kp = 20.0f;
-        constexpr float ki = 30.0f;
+        constexpr float ki = 60.0f;
         constexpr float max_integral = 150.0f; // anti-windup limit
         constexpr float kd = 0.0f;
         constexpr float kd_filter_alpha = 0.05f;
 
         // Feedforward and gain scheduling.
-        constexpr float deadband_fwd_us = 75.0f;
-        constexpr float deadband_rev_us = 70.0f;
+        constexpr float deadband_fwd_us = 55.0f;
+        constexpr float deadband_rev_us = 28.0f;
 
-        constexpr float kv_ff_fwd = 10.0f;
-        constexpr float kv_ff_rev = 40.0f;
+        constexpr float kv_ff_fwd = 14.0f;
+        constexpr float kv_ff_rev = 8.0f;
 
         constexpr float kp_boost = 60.0f;
         constexpr float err_threshold = 0.25f;
 
         // Breaks static friction from a standstill; the reverse deadband is too
         // wide for the PI term alone.
-        constexpr float stiction_kick_rev_us = 100.0f;
+        constexpr float stiction_kick_rev_us = 0.0f; // 0 disables
         constexpr float stiction_speed_mps = 0.05f; // below this the wheels count as stopped
     }
 

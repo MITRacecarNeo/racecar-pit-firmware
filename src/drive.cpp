@@ -16,60 +16,72 @@ namespace
 {
   // ISR state, read under noInterrupts().
   volatile uint32_t lastTransitionTime = 0;
-  volatile uint32_t deltaTime = 0;
+  volatile uint32_t intervals[cfg::ES2845S_4900KV_MOTOR::rpm_window] = {0};
+  volatile uint8_t intervalCount = 0; // valid entries, up to rpm_window
+  volatile uint8_t intervalIdx = 0;
   volatile uint8_t lastState = 0;
   volatile int8_t direction = 0;
+  HallDirFilter dirFilter; // ISR only
 
   void onHallChange()
   {
+    using namespace cfg::ES2845S_4900KV_MOTOR;
     const uint32_t now = micros();
-    const uint8_t state = (digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_a_pin) << 2) |
-                          (digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_b_pin) << 1) |
-                          digitalRead(cfg::ES2845S_4900KV_MOTOR::hall_c_pin);
+    const uint8_t state = (digitalRead(hall_a_pin) << 2) | (digitalRead(hall_b_pin) << 1) | digitalRead(hall_c_pin);
     if (state == lastState)
       return;
 
-    deltaTime = now - lastTransitionTime;
+    const uint32_t dt = now - lastTransitionTime;
     lastTransitionTime = now;
+    // From a standstill, take the first direction at once and drop the stale intervals.
+    if (dt > stop_timeout_us)
+    {
+      dirFilter = HallDirFilter{};
+      intervalCount = 0;
+    }
+    else
+    {
+      intervals[intervalIdx] = dt;
+      intervalIdx = (intervalIdx + 1) % rpm_window;
+      if (intervalCount < rpm_window)
+        intervalCount++;
+    }
 
-    const int8_t d = hallDirection(lastState, state);
-    if (d != 0)
-      direction = d;
+    direction = filterHallDirection(dirFilter, hallDirection(lastState, state), dir_confirm_transitions);
     lastState = state;
   }
 
   float filteredRpm = 0.0f;
 
-  // Signed ground speed, m/s. Averages the last rpm_window hall intervals and
-  // low-pass filters the result; reports 0 once no edge has arrived within
-  // stop_timeout_us, rather than a ghost speed from a stale interval.
+  // Signed ground speed, m/s, from the median of the last rpm_window hall
+  // intervals, low-pass filtered. An open interval longer than the median
+  // stands in for it, so the estimate falls while the motor slows between
+  // edges; 0 once no edge has arrived within stop_timeout_us.
   float updateSpeedEstimate()
   {
     using namespace cfg::ES2845S_4900KV_MOTOR;
 
+    uint32_t buf[rpm_window];
     noInterrupts();
-    const uint32_t dt = deltaTime;
     const uint32_t lastT = lastTransitionTime;
+    const uint8_t n = intervalCount;
     const int8_t dir = direction;
+    for (uint8_t i = 0; i < rpm_window; i++)
+      buf[i] = intervals[i];
     interrupts();
 
-    if (dt == 0 || (micros() - lastT) > stop_timeout_us)
+    const uint32_t open = micros() - lastT;
+    if (n == 0 || open > stop_timeout_us)
     {
       filteredRpm = 0.0f;
       return 0.0f;
     }
 
-    static uint32_t dt_buffer[rpm_window] = {0};
-    static uint8_t dt_idx = 0;
-    dt_buffer[dt_idx] = dt;
-    dt_idx = (dt_idx + 1) % rpm_window;
+    uint32_t dt = medianInterval(buf, n);
+    if (open > dt)
+      dt = open;
 
-    uint32_t sum_dt = 0;
-    for (uint8_t i = 0; i < rpm_window; i++)
-      sum_dt += dt_buffer[i];
-    const uint32_t avg_dt = sum_dt / rpm_window;
-
-    const float transitionsPerSec = 1000000.0f / avg_dt;
+    const float transitionsPerSec = 1000000.0f / dt;
     const float electricalRpm = (transitionsPerSec * 60.0f) / hall_states_per_erev;
     const float mechanicalRpm = electricalRpm / pole_pairs;
 
@@ -106,6 +118,8 @@ namespace
 
   // PI plus feedforward on wheel speed. The feedforward term carries the output
   // across the ESC deadband; the gain schedule adds authority on large error.
+  // The output stays on the target's side of neutral: a forward pulse while
+  // reversing (or the reverse) makes the ESC brake and jerk the drivetrain.
   uint16_t speedPID(float target_mps, float measured_mps, float dt)
   {
     using namespace cfg::PID_CTRL;
@@ -127,7 +141,10 @@ namespace
         ff_term -= stiction_kick_rev_us;
     }
 
-    const float active_kp = (fabsf(err) > err_threshold) ? kp_boost : kp;
+    // In reverse the boost only helps the car off a standstill; once moving,
+    // a noisy speed sample times kp_boost swings the output too far.
+    const bool reverse_moving = target_mps < 0.0f && measured_mps <= -stiction_speed_mps;
+    const float active_kp = (fabsf(err) > err_threshold && !reverse_moving) ? kp_boost : kp;
     const float p_term = active_kp * err;
 
     const float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
@@ -136,15 +153,17 @@ namespace
     speedLastErr = err;
 
     // Integrate only off the limits, or when the error pushes back into range.
+    const float pwm_lo = target_mps > 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_min;
+    const float pwm_hi = target_mps < 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_max;
     const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
-    const bool hit_upper_limit = (predicted_pwm >= speed_pwm_max) && (err > 0);
-    const bool hit_lower_limit = (predicted_pwm <= speed_pwm_min) && (err < 0);
+    const bool hit_upper_limit = (predicted_pwm >= pwm_hi) && (err > 0);
+    const bool hit_lower_limit = (predicted_pwm <= pwm_lo) && (err < 0);
     if (!hit_upper_limit && !hit_lower_limit)
       speedIntegral += err * dt;
     speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
 
     const float final_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
-    return (uint16_t)constrain(final_pwm, (float)speed_pwm_min, (float)speed_pwm_max);
+    return (uint16_t)constrain(final_pwm, pwm_lo, pwm_hi);
   }
 
   constexpr RcThrottleMap rc_throttle_map = {
@@ -321,14 +340,29 @@ void startDriveControl()
   drive_timer.begin(driveTick, cfg::DRIVE_LOOP::period_us);
 }
 
+namespace
+{
+  // Hundredths, sign kept, without float printf.
+  int centi(float v)
+  {
+    return (int)(v * 100.0f + (v < 0.0f ? -0.5f : 0.5f));
+  }
+}
+
 void printDriveTrace()
 {
   if (!cfg::DEBUG::serial_plot)
     return;
-  Serial.print(">Target_MPS:");
-  Serial.println(trace_target_mps);
-  Serial.print(">Measured_MPS:");
-  Serial.println(trace_measured_mps);
-  Serial.print(">Sent_PWM:");
-  Serial.println(trace_pwm);
+  const int target = centi(trace_target_mps);
+  const int measured = centi(trace_measured_mps);
+  char line[96];
+  const int n = snprintf(line, sizeof(line),
+                         ">Target_MPS:%s%d.%02d\r\n>Measured_MPS:%s%d.%02d\r\n>Sent_PWM:%u\r\n",
+                         target < 0 ? "-" : "", abs(target) / 100, abs(target) % 100,
+                         measured < 0 ? "-" : "", abs(measured) / 100, abs(measured) % 100,
+                         (unsigned)trace_pwm);
+  // Skip the line when the USB buffer is full: with nothing reading the port
+  // a blocking print stalls loop() and the watchdog resets the board.
+  if (n > 0 && n < (int)sizeof(line) && Serial.availableForWrite() >= n)
+    Serial.write(line, n);
 }

@@ -35,6 +35,49 @@ int8_t hallDirection(uint8_t prev, uint8_t curr)
   return 0;
 }
 
+uint32_t medianInterval(const uint32_t *v, uint8_t n)
+{
+  if (n == 0)
+    return 0;
+  uint32_t s[8];
+  if (n > 8)
+    n = 8;
+  for (uint8_t i = 0; i < n; i++)
+  {
+    uint32_t x = v[i];
+    uint8_t j = i;
+    for (; j > 0 && s[j - 1] > x; j--)
+      s[j] = s[j - 1];
+    s[j] = x;
+  }
+  return (n % 2) ? s[n / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+}
+
+int8_t filterHallDirection(HallDirFilter &f, int8_t d, uint8_t confirm)
+{
+  if (d == 0)
+    return f.committed;
+  if (f.committed == 0 || d == f.committed)
+  {
+    f.committed = d;
+    f.count = 0;
+    return f.committed;
+  }
+  if (d == f.pending)
+    f.count++;
+  else
+  {
+    f.pending = d;
+    f.count = 1;
+  }
+  if (f.count >= confirm)
+  {
+    f.committed = d;
+    f.count = 0;
+  }
+  return f.committed;
+}
+
 bool rcPulseValid(uint16_t pulse, uint16_t lo, uint16_t hi)
 {
   return pulse >= lo && pulse <= hi;

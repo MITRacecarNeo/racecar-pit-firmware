@@ -4,6 +4,76 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-022 - 2026-10-26
+
+### Setup
+Car on the floor in a straight lane about 5 m long and 0.7 m wide, battery
+7.58 V at the start and 7.45 V at the end. Pi publishes `/drive` while RB is
+held: fixed speed, steering from a gyro heading hold (at most 0.15 rad), with
+lidar stop zones (15 cm at the sides; the end of the lane at 0.3 m plus 0.6 m
+per m/s). Trace build (`-DRCN_SERIAL_PLOT`) for target, measured speed and
+PWM on USB serial. `/drive` speed is a normalized command: 0.02, 0.5 and 1.0
+give setpoints of 0.51, 0.75 and 1.0 m/s.
+
+### Hypothesis
+The steady speed error comes from the feedforward, not the gains; a refit
+brings each direction within +/- 0.05 m/s of the setpoint.
+
+### Method
+Six runs per sweep, 3 s each, forward then reverse at each setpoint. Steady
+value is the mean over the last 1 s. One change set per sweep.
+
+### Parameters
+| Name | Sweep 1 | Sweep 2 | Sweep 3 | Sweep 4 | Unit |
+| ---- | ------- | ------- | ------- | ------- | ---- |
+| `deadband_fwd_us` / `kv_ff_fwd` | 75 / 10 | 55 / 14 | 55 / 14 | 55 / 14 | us, us per m/s |
+| `deadband_rev_us` / `kv_ff_rev` | 70 / 15 | 35 / 10 | 35 / 10 | 28 / 8 | us, us per m/s |
+| `stiction_kick_rev_us` | 0 | 0 | 0 | 0 | us |
+| `ki` | 30 | 30 | 30 | 60 | - |
+| Hall direction confirm | 1 | 2 | 2 | 2 | transitions |
+| Output limited to the target's side of neutral | no | no | yes | yes | - |
+| `kp_boost` in reverse once moving | yes | yes | no | no | - |
+| Speed estimate | repeated interval | repeated interval | repeated interval | median of 5 | - |
+
+A practice run before sweep 1, on `kv_ff_rev` 40 and kick 100 us, reversed at
+-1.5 to -1.7 m/s for a 0.75 m/s setpoint.
+
+### Observations
+| Setpoint | Sweep 1 | Sweep 2 | Sweep 3 | Sweep 4 | Unit |
+| -------- | ------- | ------- | ------- | ------- | ---- |
+| +0.51 | 0.71 | 0.53 | 0.55 | 0.54 | m/s |
+| +0.75 | 0.96 | 0.82 | 0.79 | 0.77 | m/s |
+| +1.00 | 1.22 | - | 1.08 | 1.04 | m/s |
+| -0.51 | -0.85 | -0.47 (sd 0.37) | -0.64 | -0.59 | m/s |
+| -0.75 | -1.22 | side stop | -0.97 | -0.84 | m/s |
+| -1.00 | -1.44 | - | -1.26 | -1.09 | m/s |
+| Wrong-sign speed samples | 4 / 703 | 4 / 381 | 2 / 723 | 0 / 724 | - |
+| Forward start peak at +0.51 | 1.10 | 1.60 | 1.75 | 1.17 | m/s |
+
+- Sweep 1: forward PWM held 1565 to 1572 us at every setpoint; the car gains
+  about 1 m/s per 14 us above a 55 us deadband. The integrator at `ki` 30 adds
+  6 us/s at a 0.2 m/s error, too slow to remove the offset in 3 s.
+- Sweep 2: reverse oscillated between -1.49 and +0.43 m/s with PWM 1399 to
+  1515 us. A speed spike drove `kp_boost` past neutral to a forward pulse; the
+  ESC braked, the drivetrain jerked, and the halls read forward transitions.
+  The car visibly flipped back and forth.
+- Sweep 3: reverse PWM held 1449 to 1468 us with no oscillation; forward
+  spikes to 1.75 m/s at 0.5 m/s came from single short hall intervals
+  repeated in the five-sample average.
+- Sweep 4: reverse still decreasing at 3 s (-1.17 m/s mean over 1 to 3 s,
+  -1.09 over 2 to 3 s at a 1.0 setpoint): the start boost overshoots and the
+  integrator pulls it back over about 3 s.
+- The lidar end-of-lane check ended one practice reverse run on the antennas,
+  which sit 0.27 m behind the lidar and sway past the rear of the footprint;
+  they are masked in the sweep tool.
+
+### Conclusion
+Supported forward: within +0.04 m/s at each setpoint. Partly supported in
+reverse: 0.08 to 0.09 m/s fast at 3 s and still converging; the residual comes
+from the start boost overshoot.
+
+---
+
 ## TL-021 - 2026-10-26
 
 ### Setup

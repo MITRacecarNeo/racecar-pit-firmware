@@ -103,11 +103,23 @@ Serial1 -> UARTRx (CommandFramer, CRC-16 gate) -> drive_cmd -> drive tick -> spe
                                             -> system_state info_request -> InfoBuilder, telemetry tick
 ```
 
-The speed estimate averages the last five hall intervals, converts electrical
-to mechanical RPM, then low-pass filters at `rpm_filter_alpha`. It applies the
-two gear ratios and the wheel circumference to reach m/s at the ground, which
-is what the encoder field carries and what the speed loop closes on. Only
-the drive tick updates it.
+The hall ISR stores each interval between transitions. The speed estimate
+takes the median of the last `rpm_window` (5) intervals, so a contact bounce
+does not read as a speed spike. While the current interval is already longer
+than that median, the open interval stands in for it, so the estimate falls as
+the motor slows between edges. It converts electrical to mechanical RPM,
+low-pass filters at `rpm_filter_alpha`, then applies the two gear ratios and
+the wheel circumference to reach m/s at the ground, which is what the encoder
+field carries and what the speed loop closes on. Only the drive tick updates
+it. The direction comes from the hall sequence; a reversal counts only after
+`dir_confirm_transitions` (2) transitions agree, and the first direction after
+a standstill is taken at once.
+
+`speedPID` adds a feedforward (deadband plus a slope per m/s, per direction) to
+a PI term; `kp_boost` replaces `kp` while the error exceeds `err_threshold`,
+and in reverse only near a standstill. The output stays on the target's side
+of neutral: on this ESC, a forward pulse while reversing brakes, and the jerk
+reads back on the halls as a direction change.
 
 The telemetry tick sends at exactly `tx_freq` from its own timer: every gap
 between frames is 5.00 ms on the car (TL-021). `Serial1` gets a 512-byte

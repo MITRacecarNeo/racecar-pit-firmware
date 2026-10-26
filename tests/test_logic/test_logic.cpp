@@ -112,6 +112,52 @@ static void test_hall_invalid_transitions_report_zero(void)
     TEST_ASSERT_EQUAL_INT8(0, hallDirection(3, 3));
 }
 
+static void test_hall_filter_takes_first_direction_at_once(void)
+{
+    HallDirFilter f;
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, -1, 2));
+}
+
+static void test_hall_filter_ignores_a_single_flip(void)
+{
+    HallDirFilter f;
+    filterHallDirection(f, -1, 2);
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, 1, 2));
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, -1, 2));
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, 1, 2));
+}
+
+static void test_hall_filter_accepts_a_confirmed_reversal(void)
+{
+    HallDirFilter f;
+    filterHallDirection(f, 1, 2);
+    TEST_ASSERT_EQUAL_INT8(1, filterHallDirection(f, -1, 2));
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, -1, 2));
+}
+
+static void test_hall_filter_holds_through_unknown_transitions(void)
+{
+    HallDirFilter f;
+    filterHallDirection(f, 1, 2);
+    TEST_ASSERT_EQUAL_INT8(1, filterHallDirection(f, 0, 2));
+    filterHallDirection(f, -1, 2);
+    TEST_ASSERT_EQUAL_INT8(1, filterHallDirection(f, 0, 2));
+    TEST_ASSERT_EQUAL_INT8(-1, filterHallDirection(f, -1, 2));
+}
+
+static void test_median_interval_ignores_a_bounce_pair(void)
+{
+    const uint32_t v[5] = {4000, 30, 4100, 25, 3900};
+    TEST_ASSERT_EQUAL_UINT32(3900, medianInterval(v, 5));
+}
+
+static void test_median_interval_partial_and_empty(void)
+{
+    const uint32_t v[2] = {4000, 2000};
+    TEST_ASSERT_EQUAL_UINT32(3000, medianInterval(v, 2));
+    TEST_ASSERT_EQUAL_UINT32(0, medianInterval(v, 0));
+}
+
 // --------------------------- RC switches -------------------------- //
 
 static void test_rc_pulse_validity_band(void)
@@ -307,6 +353,12 @@ int main(int, char **)
     RUN_TEST(test_map_stays_inside_bounds_across_sweep);
     RUN_TEST(test_hall_sequence_directions);
     RUN_TEST(test_hall_invalid_transitions_report_zero);
+    RUN_TEST(test_hall_filter_takes_first_direction_at_once);
+    RUN_TEST(test_hall_filter_ignores_a_single_flip);
+    RUN_TEST(test_hall_filter_accepts_a_confirmed_reversal);
+    RUN_TEST(test_hall_filter_holds_through_unknown_transitions);
+    RUN_TEST(test_median_interval_ignores_a_bounce_pair);
+    RUN_TEST(test_median_interval_partial_and_empty);
     RUN_TEST(test_rc_pulse_validity_band);
     RUN_TEST(test_rc_switch_positions);
     RUN_TEST(test_rc_switch_down_positions);

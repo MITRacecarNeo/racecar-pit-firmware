@@ -12,6 +12,23 @@ uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi);
 // sequence (a glitch or a missed edge).
 int8_t hallDirection(uint8_t prev, uint8_t curr);
 
+// Direction debounce: a reversal is accepted only after `confirm` consecutive
+// transitions agree, so one bad edge cannot flip the speed sign. The first
+// direction from a standstill (committed 0) is accepted at once.
+struct HallDirFilter
+{
+  int8_t committed = 0;
+  int8_t pending = 0;
+  uint8_t count = 0;
+};
+
+// Median of n intervals (n <= 8); 0 for n == 0. A contact bounce adds a pair
+// of near-zero intervals, which shifts a mean but not the median.
+uint32_t medianInterval(const uint32_t *v, uint8_t n);
+
+// Feeds one hallDirection() result; returns the committed direction.
+int8_t filterHallDirection(HallDirFilter &f, int8_t d, uint8_t confirm);
+
 // True when an RC pulse is inside the plausible band. PPMReader reports 0 for a
 // channel that is absent, out of band, or past its failsafe.
 bool rcPulseValid(uint16_t pulse, uint16_t lo, uint16_t hi);

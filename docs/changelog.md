@@ -99,12 +99,29 @@ driver; there is no 0.8.0 firmware release.
   `imu.mag_range_read_gauss`, and the raw `imu.reg_*` registers, read back
   from the chip, replace `imu.accel_rate_hz`, which reported the configured
   accel rate the chip ignores while the gyro runs.
+- Speed loop feedforward refit on the floor (TL-022): `deadband_fwd_us` 75 ->
+  55, `kv_ff_fwd` 10 -> 14, `deadband_rev_us` 70 -> 28, `kv_ff_rev` 40 -> 8,
+  `stiction_kick_rev_us` 100 -> 0, `ki` 30 -> 60. Steady forward error went
+  from +0.21 to +0.25 m/s to +0.02 to +0.04 m/s; reverse from about twice the
+  setpoint, oscillating, to 0.08 to 0.09 m/s fast at 3 s.
+- `speedPID` keeps its output on the target's side of neutral, and in reverse
+  applies `kp_boost` only near a standstill.
+- The `serial_plot` trace is off unless built with `-DRCN_SERIAL_PLOT`.
 - swA slow mode is now the low pulse (lever up on the FS-i6, its start
   position); high is fast. A receiver with no signal reads fast. swD is
   unchanged: high (lever down) is manual override, low or no signal leaves the
   Pi in control.
 
 ### Fixed
+- The speed estimate pushed the latest hall interval into its five-sample
+  average on every drive tick, so one short (bounce) interval read as a full
+  speed spike, up to 1.75 m/s at a 0.5 m/s setpoint. The hall ISR now stores
+  real intervals and the estimate takes their median.
+- One out-of-sequence hall transition flipped the speed sign (4 of 703
+  samples in reverse); a reversal now needs two agreeing transitions
+  (`dir_confirm_transitions`).
+- The `serial_plot` trace blocked `loop()` when nothing read the USB port, and
+  the watchdog reset the board; lines are now skipped while the port is full.
 - `cfg::I2C::clock_hz` never took effect: Adafruit BusIO's `begin()` calls
   `Wire.begin()`, which resets the bus to 100 kHz. The clock is applied again
   after the LSM9DS1 starts.
