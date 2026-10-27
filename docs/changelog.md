@@ -5,7 +5,7 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
-## [0.9.0] - Unreleased
+## [0.9.0] - 2026-10-26
 
 Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
 unchanged; the info reply is additive and only sent on request, so earlier

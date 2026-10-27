@@ -4,6 +4,63 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-023 - 2026-10-26
+
+### Setup
+Car on a block, wheels off the ground, transmitter off. Plain build of
+`7505357` (`v0.9.0.11-pcb`) unless noted; profiling build for the profile
+run. Fresh battery, 7.71 V.
+
+### Hypothesis
+The 0.9.0 firmware passes the regression suite: info reply, timing targets,
+command loss, no receiver, a missing sensor at boot, and repeated uploads.
+
+### Method
+- Info reply from the car (`scripts/pit_uart.py --info`) against a host
+  build of the same commit.
+- `scripts/profile_capture.py 60` on the profiling build.
+- Two uploads (profiling build, then plain).
+- Wheels spinning at 0.82 m/s on the gamepad (LB), then `racecar-teleop`
+  restarted.
+- IMU cable unplugged at the IMU, Teensy rebooted by an upload, info read;
+  cable plugged back in, info read.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Info keys | 88 | - |
+| Profile capture | 60 | s |
+| Teleop restart at wheel speed | 0.82 | m/s |
+
+### Observations
+| Check | Result |
+| ----- | ------ |
+| Info reply | Every configuration key equals the host build; differences only in `fw.git`/`fw.label` (car on `35f2216`, the later commits change docs only), the IMU register readback, and `status.*` |
+| Telemetry rate, gap max | 200.0 Hz, 5.000 ms |
+| Drive loop period mean, max | 999.5 us, 1.000 ms |
+| Command to PWM max | 999 us |
+| Interrupt lateness max | 0 us |
+| IMU, power reads | 250, 100 per s |
+| Command CRC failures | 0 |
+| Uploads | 2 of 2 booted; each first write failed, the retry succeeded |
+| Teleop restart | Wheels stopped at once; LED loading sweep when teleop came back (operator) |
+| No receiver | Gamepad drove with the transmitter off |
+| IMU missing at boot | `status.imu=missing`, `status.power=ok`, watchdog armed, telemetry and encoder published |
+| IMU plugged back in | `status.imu=ok`, rates 952 / 952 / 155 Hz, accel z 10.3 m/s^2 |
+
+- Unplugging and plugging the IMU cable each reset the Teensy (three ESC
+  beeps; `status.last_reset=reset`, flags 1, the power-on reset, not the
+  watchdog). The connector dips the 3.3 V supply. The sensor coming back
+  `ok` was therefore a fresh boot, not detection while running.
+- Cold boot: the battery swap earlier the same day booted `35f2216` from
+  power-on (`reset_flags=1`). A full system power cycle was not repeated.
+
+### Conclusion
+Supported. A sensor plugged in while the board runs resets the Teensy
+through its supply; the board recovers on its own.
+
+---
+
 ## TL-022 - 2026-10-26
 
 ### Setup

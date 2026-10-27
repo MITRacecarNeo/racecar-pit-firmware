@@ -399,7 +399,7 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 
 Latest entries; full history in `docs/changelog.md`.
 
-### [0.9.0] - Unreleased
+### [0.9.0] - 2026-10-26
 Pairs with driver v0.9.x; telemetry and command sizes unchanged.
 - Added: firmware info reply (version, commit, compiled configuration, sensor
   status) on request through `SystemState` bit `0x20`; hardware watchdog
