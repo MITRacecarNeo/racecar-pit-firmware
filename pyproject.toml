@@ -1,0 +1,27 @@
+[project]
+name = "racecar-pit-firmware-tools"
+version = "0.9.0"
+description = "Bench tools for the NEO-PIT Teensy firmware"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pyserial"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/scripts"]
+pythonpath = ["scripts"]
+
+[tool.black]
+target-version = ["py310"]
+line-length = 99
+
+[tool.ruff]
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.mypy]
+files = ["scripts"]
+ignore_missing_imports = true

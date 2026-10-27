@@ -4,6 +4,800 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-023 - 2026-10-26
+
+### Setup
+Car on a block, wheels off the ground, transmitter off. Plain build of
+`7505357` (`v0.9.0.11-pcb`) unless noted; profiling build for the profile
+run. Fresh battery, 7.71 V.
+
+### Hypothesis
+The 0.9.0 firmware passes the regression suite: info reply, timing targets,
+command loss, no receiver, a missing sensor at boot, and repeated uploads.
+
+### Method
+- Info reply from the car (`scripts/pit_uart.py --info`) against a host
+  build of the same commit.
+- `scripts/profile_capture.py 60` on the profiling build.
+- Two uploads (profiling build, then plain).
+- Wheels spinning at 0.82 m/s on the gamepad (LB), then `racecar-teleop`
+  restarted.
+- IMU cable unplugged at the IMU, Teensy rebooted by an upload, info read;
+  cable plugged back in, info read.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Info keys | 88 | - |
+| Profile capture | 60 | s |
+| Teleop restart at wheel speed | 0.82 | m/s |
+
+### Observations
+| Check | Result |
+| ----- | ------ |
+| Info reply | Every configuration key equals the host build; differences only in `fw.git`/`fw.label` (car on `35f2216`, the later commits change docs only), the IMU register readback, and `status.*` |
+| Telemetry rate, gap max | 200.0 Hz, 5.000 ms |
+| Drive loop period mean, max | 999.5 us, 1.000 ms |
+| Command to PWM max | 999 us |
+| Interrupt lateness max | 0 us |
+| IMU, power reads | 250, 100 per s |
+| Command CRC failures | 0 |
+| Uploads | 2 of 2 booted; each first write failed, the retry succeeded |
+| Teleop restart | Wheels stopped at once; LED loading sweep when teleop came back (operator) |
+| No receiver | Gamepad drove with the transmitter off |
+| IMU missing at boot | `status.imu=missing`, `status.power=ok`, watchdog armed, telemetry and encoder published |
+| IMU plugged back in | `status.imu=ok`, rates 952 / 952 / 155 Hz, accel z 10.3 m/s^2 |
+
+- Unplugging and plugging the IMU cable each reset the Teensy (three ESC
+  beeps; `status.last_reset=reset`, flags 1, the power-on reset, not the
+  watchdog). The connector dips the 3.3 V supply. The sensor coming back
+  `ok` was therefore a fresh boot, not detection while running.
+- Cold boot: the battery swap earlier the same day booted `35f2216` from
+  power-on (`reset_flags=1`). A full system power cycle was not repeated.
+
+### Conclusion
+Supported. A sensor plugged in while the board runs resets the Teensy
+through its supply; the board recovers on its own.
+
+---
+
+## TL-022 - 2026-10-26
+
+### Setup
+Car on the floor in a straight lane about 5 m long and 0.7 m wide, battery
+7.58 V at the start and 7.45 V at the end. Pi publishes `/drive` while RB is
+held: fixed speed, steering from a gyro heading hold (at most 0.15 rad), with
+lidar stop zones (15 cm at the sides; the end of the lane at 0.3 m plus 0.6 m
+per m/s). Trace build (`-DRCN_SERIAL_PLOT`) for target, measured speed and
+PWM on USB serial. `/drive` speed is a normalized command: 0.02, 0.5 and 1.0
+give setpoints of 0.51, 0.75 and 1.0 m/s.
+
+### Hypothesis
+The steady speed error comes from the feedforward, not the gains; a refit
+brings each direction within +/- 0.05 m/s of the setpoint.
+
+### Method
+Six runs per sweep, 3 s each, forward then reverse at each setpoint. Steady
+value is the mean over the last 1 s. One change set per sweep.
+
+### Parameters
+| Name | Sweep 1 | Sweep 2 | Sweep 3 | Sweep 4 | Unit |
+| ---- | ------- | ------- | ------- | ------- | ---- |
+| `deadband_fwd_us` / `kv_ff_fwd` | 75 / 10 | 55 / 14 | 55 / 14 | 55 / 14 | us, us per m/s |
+| `deadband_rev_us` / `kv_ff_rev` | 70 / 15 | 35 / 10 | 35 / 10 | 28 / 8 | us, us per m/s |
+| `stiction_kick_rev_us` | 0 | 0 | 0 | 0 | us |
+| `ki` | 30 | 30 | 30 | 60 | - |
+| Hall direction confirm | 1 | 2 | 2 | 2 | transitions |
+| Output limited to the target's side of neutral | no | no | yes | yes | - |
+| `kp_boost` in reverse once moving | yes | yes | no | no | - |
+| Speed estimate | repeated interval | repeated interval | repeated interval | median of 5 | - |
+
+A practice run before sweep 1, on `kv_ff_rev` 40 and kick 100 us, reversed at
+-1.5 to -1.7 m/s for a 0.75 m/s setpoint.
+
+### Observations
+| Setpoint | Sweep 1 | Sweep 2 | Sweep 3 | Sweep 4 | Unit |
+| -------- | ------- | ------- | ------- | ------- | ---- |
+| +0.51 | 0.71 | 0.53 | 0.55 | 0.54 | m/s |
+| +0.75 | 0.96 | 0.82 | 0.79 | 0.77 | m/s |
+| +1.00 | 1.22 | - | 1.08 | 1.04 | m/s |
+| -0.51 | -0.85 | -0.47 (sd 0.37) | -0.64 | -0.59 | m/s |
+| -0.75 | -1.22 | side stop | -0.97 | -0.84 | m/s |
+| -1.00 | -1.44 | - | -1.26 | -1.09 | m/s |
+| Wrong-sign speed samples | 4 / 703 | 4 / 381 | 2 / 723 | 0 / 724 | - |
+| Forward start peak at +0.51 | 1.10 | 1.60 | 1.75 | 1.17 | m/s |
+
+- Sweep 1: forward PWM held 1565 to 1572 us at every setpoint; the car gains
+  about 1 m/s per 14 us above a 55 us deadband. The integrator at `ki` 30 adds
+  6 us/s at a 0.2 m/s error, too slow to remove the offset in 3 s.
+- Sweep 2: reverse oscillated between -1.49 and +0.43 m/s with PWM 1399 to
+  1515 us. A speed spike drove `kp_boost` past neutral to a forward pulse; the
+  ESC braked, the drivetrain jerked, and the halls read forward transitions.
+  The car visibly flipped back and forth.
+- Sweep 3: reverse PWM held 1449 to 1468 us with no oscillation; forward
+  spikes to 1.75 m/s at 0.5 m/s came from single short hall intervals
+  repeated in the five-sample average.
+- Sweep 4: reverse still decreasing at 3 s (-1.17 m/s mean over 1 to 3 s,
+  -1.09 over 2 to 3 s at a 1.0 setpoint): the start boost overshoots and the
+  integrator pulls it back over about 3 s.
+- Manual driving afterward on the same firmware (operator report): starts
+  and stops without the earlier jerk, and forward and reverse respond the
+  same way to the stick.
+- The lidar end-of-lane check ended one practice reverse run on the antennas,
+  which sit 0.27 m behind the lidar and sway past the rear of the footprint;
+  they are masked in the sweep tool.
+
+### Conclusion
+Supported forward: within +0.04 m/s at each setpoint. Partly supported in
+reverse: 0.08 to 0.09 m/s fast at 3 s and still converging; the residual comes
+from the start boost overshoot.
+
+---
+
+## TL-021 - 2026-10-26
+
+### Setup
+As TL-020, with telemetry sent from a 200 Hz IntervalTimer interrupt
+(priority 160), the info payload built by an `InfoBuilder` thread into
+double buffers, and the IMU and INA226 readings shared through sequence
+counters.
+
+### Hypothesis
+With the frame sent from its own timer, the telemetry gap no longer depends
+on the sensor threads; the IMU read split keeps its saving.
+
+### Method
+`scripts/profile_capture.py 60` twice on the profiling build; info reply;
+watchdog test build with the telemetry tick, the info builder and the drive
+tick stopped in turn; plain build, `scripts/telemetry_probe.py 10` three
+times.
+
+### Parameters
+| Name | TL-020 | Timer telemetry | Unit |
+| ---- | ------ | --------------- | ---- |
+| Telemetry rate | 200.0 | 200.0, 200.0 | Hz |
+| Telemetry gap p99 bin / max (firmware) | 6.5 / 6.47 | 5.05 / 5.000 | ms |
+| Teensy-stamped gap max at the Pi (plain build) | - | 5.04, 5.02 | ms |
+| Telemetry tick time | - | 12 | us |
+| `imu_read` | 715 | 715 | us |
+| Drive loop period max | 1.000 | 1.000 | ms |
+| Interrupt lateness max | 0 | 1 | us |
+| Info reply keys | - | 88 | - |
+
+### Observations
+- Every telemetry target passed in both profiling runs. The capture first
+  printed 196.7 Hz for run 2: one report's lines were missing and the tool
+  divided by all 61 windows; it now rates each stat over the windows it
+  appears in, and run 2 recomputes to 200.0 Hz.
+- Telemetry tick, info builder and drive tick stopped in turn: each reset the
+  Teensy by the watchdog (`status.last_reset=watchdog`, flags 128).
+- The first probe after the plain flash showed 2.78 ms median and 24.7 ms max
+  gaps while `pit_node` re-mapped the Teensy clock after the reset; 5 s later
+  every gap was 5.00 to 5.04 ms.
+
+### Conclusion
+Supported. Telemetry leaves every 5.00 ms regardless of the sensor threads;
+the IMU read split stays.
+
+---
+
+## TL-020 - 2026-10-26
+
+### Setup
+Reference car on a block, teleop running. Profiling build of `3e3cfdd` plus
+the LSM9DS1 register readback and the read split: `getAccel()`,
+`getGyro()`, `getMag()` in place of `getEvent(a, m, g, temp)`. A/B against
+the plain `3e3cfdd` build.
+
+### Hypothesis
+The split removes the temperature read and the second magnetometer read,
+shortening each IMU read without changing the values or the timing targets.
+
+### Method
+`scripts/profile_capture.py 60` three times; info reply for the registers;
+`scripts/telemetry_probe.py` on both builds.
+
+### Parameters
+| Name | Before (TL-016, TL-019) | Split | Unit |
+| ---- | ----------------------- | ----- | ---- |
+| `imu_read` | 1090 | 715 | us |
+| Telemetry gap p99 bin / max | 5.6 to 5.9 / 5.57 to 5.85 | 6.5 / 6.47, 6.47, 6.50 | ms |
+| Drive loop period max | 1.000 | 1.000 | ms |
+| Gyro / accel / mag rate read back | - | 952 / 952 / 155 | Hz |
+| Mag full scale read back | - | 8 | gauss |
+| Registers CTRL_REG1_G, CTRL_REG6_XL, CTRL_REG1_M, CTRL_REG2_M, CTRL_REG3_M | - | 0xC8, 0x78, 0x62, 0x20, 0x00 | - |
+
+### Observations
+- The accelerometer runs at the gyro's 952 Hz; the 119 Hz written to ODR_XL
+  has no effect while the gyro runs.
+- The magnetometer reads 8 gauss full scale on the chip, matching the
+  driver's conversion, so a range mismatch does not explain the 2x field.
+- Mag readings were about -57, +136, -32 uT on both builds, against about
+  -83, +167, -160 uT in every reading of 2026-10-25 and the morning of
+  2026-10-26: a change around the car, not in the firmware.
+- The probe's distinct-sample count varied 129 to 180 per second on both
+  builds with the car still; the firmware counted 250 distinct reads per
+  second on both.
+- Telemetry max gap rose from 5.57-5.85 to 6.47-6.50 ms, the same in three
+  runs.
+
+### Conclusion
+Read time down 34%, values unchanged; but the split worsens telemetry jitter
+by about 0.9 ms under round-robin scheduling and fails the 6 ms p99 target.
+Not committed as is.
+
+---
+
+## TL-019 - 2026-10-26
+
+### Setup
+Reference car on a block, teleop running, transmitter off. Firmware `dee5186`
+plus the watchdog (RTWDOG, 32 kHz clock), built three ways: the test build
+(profiling plus hang commands) with a 2000 ms timeout, the same with the
+shipping 100 ms, and the plain build.
+
+### Hypothesis
+A stopped context resets the Teensy within the timeout plus one heartbeat
+round; normal running never resets it; uploads keep working with it armed.
+
+### Method
+1. 2000 ms build: soft reboot into HalfKay and watch the USB ID for 15 s
+   without writing.
+2. 100 ms build: stop each of the eight contexts in turn from USB serial; time
+   the USB drop and read the info reply after the reboot.
+3. Reset latency: hang INA226, LSM9DS1 and dot matrix while counting telemetry
+   at the Pi; latency = last frame after the command.
+4. 120 s profiling soak with nothing stopped; any reset restarts the report
+   clock.
+5. Three uploads of the plain build through `scripts/upload.py`, each from
+   firmware with the watchdog armed.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Timeout | 100 | ms |
+| Time in HalfKay with a 2000 ms watchdog armed | 15 (no reset) | s |
+| Contexts stopped / reset by the watchdog | 8 / 8 | - |
+| Reset latency from telemetry (INA226, LSM9DS1, dot matrix) | 144, 149, 144 | ms |
+| USB drop after the command, host side | 256 to 418 | ms |
+| Watchdog refreshes | 20.0 | per s |
+| Refresh gap max | 51.0 | ms |
+| Soak | 120.6 s, 0 resets | - |
+| Uploads with the watchdog armed | 3 of 3 | - |
+
+### Observations
+- The watchdog does not run in HalfKay: the board stayed in the bootloader
+  for 15 s with a 2000 ms timeout armed, and the write from it succeeded.
+- Every stopped context (telemetry, command receive, INA226, LSM9DS1, RC
+  receive, dot matrix, drive tick, `loop()`) reset the Teensy;
+  `status.last_reset=watchdog`, `status.reset_flags=128` after each.
+- About 3 s after a watchdog reset the reply still read
+  `status.watchdog=starting`; later reads `armed`. No reset loop: the board
+  stayed up for 8 s after the last test.
+- The host sees the USB drop 100 to 270 ms after the telemetry stops: disconnect
+  detection, not firmware time.
+- Soak: drive loop 1000.0 Hz, telemetry 200.0 Hz (p99 5.9 ms); refresh rate
+  set by `DotMatrix` (50 ms loop).
+- Uploads still fail on the first write and succeed on the retry, with or
+  without the watchdog.
+
+### Conclusion
+Supported. Reset 100 to 150 ms after any context stops; no false reset in
+120 s; uploads unaffected. Margin is 2x the slowest context: a context added
+later with a loop over 50 ms needs the timeout raised.
+
+---
+
+## TL-018 - 2026-10-26
+
+### Setup
+Reference car, Teensy on the Pi's USB (bus 3), PJRC udev rule installed,
+firmware `dee5186`. PlatformIO `teensy-cli` upload: `teensy_reboot -s`, then
+`teensy_loader_cli -mmcu=TEENSY41 -w -s -v`.
+
+### Hypothesis
+The first upload fails because the loader opens the HalfKay bootloader before
+udev has applied the PJRC rule's permissions.
+
+### Method
+One upload with `udevadm monitor` (usb, hidraw, tty) and timestamped loader
+output. Then three cycles of: soft reboot, wait for HalfKay, wait 1.5 s,
+`teensy_loader_cli` without its own reboot. Then three uploads through
+`scripts/upload.py`.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Soft reboot to "Found HalfKay" | 0.9 | s |
+| "Found HalfKay" to "error writing" | 0.57 | s |
+| HalfKay HID node added to unbound by the loader | 13 | ms |
+| Upload through the script | 14.5 to 14.9 | s |
+
+### Observations
+- udev applied the rule to the bootloader's USB device before the loader
+  claimed it; the bootloader stayed enumerated through the failed write (no
+  further USB events).
+- Waiting 1.5 s after the bootloader appeared did not help: 2 of 2 writes after
+  a soft reboot failed. A write to a bootloader left over from a failed
+  attempt succeeded every time (8 of 8 on 2026-10-25 and 2026-10-26).
+- `scripts/upload.py`: 3 of 3 uploads succeeded on attempt 2.
+
+### Conclusion
+Permission race not supported. The first write after a soft reboot from the
+running firmware fails deterministically; the failed write leaves a
+bootloader that accepts the next one. Cause not traced: something the firmware
+leaves running across the soft reboot is a candidate. The upload script
+retries, which makes uploads complete on one command.
+
+---
+
+## TL-017 - 2026-10-26
+
+### Setup
+Reference car on a block, all four wheels free, teleop running, gamepad and
+FS-i6 transmitter with iA6B receiver. Firmware A: `c1e3091` (drive loop in a
+thread, before sensor pacing). Firmware B: `c1e3091` plus the 1 kHz drive
+interrupt, paced sensors, and swA decoded as slow on the low pulse.
+
+### Hypothesis
+The drive interrupt leaves the drive path and the switch behavior unchanged;
+the wheels-free speed overshoot seen on 2026-10-26 predates it.
+
+### Method
+A recorder logged `/motor`, `/encoder/speed`, `/rc/channels`, `/rc/link`,
+`/joy` and `/battery/current` while the operator drove a scripted sequence:
+gamepad forward and reverse, steering, release of the enable button, RC
+override, both switches in both positions. The switch polarity was read by
+holding both levers up, then down, twice. The same full-stick gamepad and
+slow-mode RC holds ran on firmware A and B. Logs (not in git): `data/raw/drive_regression_20261026.csv`,
+`data/raw/drive_ab_old_20261026.csv`, `data/raw/drive_ab_new_20261026.csv`.
+
+### Parameters
+| Name | A | B | Unit |
+| ---- | - | - | ---- |
+| Gamepad full stick, peak speed | 1.89, 2.01, 2.07 | 1.84, 1.96, 1.94 | m/s |
+| Gamepad full stick, last 1.5 s of a 3 to 4 s hold | 1.35, 1.22, 1.24 | 1.20, 1.35, 1.21 | m/s |
+| Slow-mode RC full stick, peak / last 1.5 s | 1.90 / 1.26 | 1.95 / 1.19 | m/s |
+| Gamepad commanded with swD high: wheel speed | - | 0.00 (134 samples) | m/s |
+
+### Observations
+- Lever up (away from the operator) sends the low pulse on both switches,
+  lever down the high pulse; the FS-i6 starts only with every lever up and
+  will not power off while the receiver is on, so a no-signal case was not
+  reached.
+- On firmware A, swA up (low) gave fast mode, the opposite of the intended
+  default; swD behaved as intended (high, lever down, locks the Pi out).
+  Firmware B decodes swA low as slow; swD unchanged.
+- Gamepad forward and reverse, steering both ways, stop on releasing the
+  enable button, RC taking over from the gamepad, swD lockout and release,
+  slow-mode RC, and fast-mode RC all behaved as expected on B (operator
+  check and recorded speeds).
+- With the wheels free the closed loop peaks about twice the 1.0 m/s
+  setpoint and is still 0.2 to 0.35 m/s high after 3 to 4 s, on both A and
+  B. Fast-mode RC is open-loop PWM: a quarter stick reached 8.6 m/s.
+
+### Conclusion
+Supported. The drive interrupt keeps the drive and switch behavior; swA now
+starts in slow mode with the transmitter's default lever position. The
+wheels-free overshoot is the existing speed loop with no load; check on the
+floor with the speed-loop work.
+
+---
+
+## TL-016 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, 6 min after a reboot, fresh battery
+(8.20 V), transmitter off. Profiling build of `c1e3091` plus the drive loop
+in a 1 kHz IntervalTimer interrupt (priority 144, `Seqlock` for RC channels
+and the drive command), LSM9DS1 read every 4 ms, INA226 every 10 ms.
+
+### Hypothesis
+With the drive loop on a timer and the sensors paced, every timing target
+holds.
+
+### Method
+`scripts/profile_capture.py 60 --probe`, then
+`scripts/telemetry_probe.py 10 --runs 3` and the info reply. Pi CPU from
+`top` during the runs.
+
+### Parameters
+| Name | TL-015 | Timer drive, paced sensors | Unit |
+| ---- | ------ | -------------------------- | ---- |
+| `drive_loop` rate | 864.7 | 1000.0 | Hz |
+| `drive_loop` period mean / max | 1.16 / 2.72 | 1.000 / 1.000 | ms |
+| `tx_slot` rate | 200.0 | 200.0 | Hz |
+| `tx_slot` p99 / max | 6.45 / 6.48 | 5.60 / 5.57 | ms |
+| `imu_loop` / distinct IMU samples | 503 / 503 | 250.0 / 250 | per s |
+| `power_loop` | 964 | 100.0 | per s |
+| `cmd_to_pwm` mean / max | 10 / 428 | 755 / 999 | us |
+| `rx_loop` max | 2.79 | 1.65 | ms |
+| `irq_late` max | 0 | 0 | us |
+| Telemetry at the Pi (3 probe runs) | - | 197.1, 189.9, 196.7 | Hz |
+| Teensy-stamped gaps at the Pi, median / max | - | 5.43 / 84 to 85 | ms |
+
+### Observations
+- Every profiling target passed: telemetry rate, gap p99 and max, drive loop
+  mean and max, command to PWM, interrupt lateness. p99 values are 50 us bin
+  edges, so a p99 can read above the exact max.
+- `cmd_to_pwm` rose from 10 to 755 us mean: an accepted command now waits for
+  the next 1 ms tick instead of running in the thread after `UARTRx`.
+- Sensor values plausible (accel about 9.8 m/s^2 on z, gyro near 0, mag and
+  battery steady); info reply `imu.read_hz=250`, `power.poll_ms=10`,
+  `i2c.clock_hz=400000`, both sensors `ok`.
+- The firmware sent 200.0 frames/s with no gap over 5.57 ms, but the Pi
+  received 189.9 to 197.1 Hz: one gap of 84 to 85 ms (about 16 frames) per
+  10 s run in the Teensy-stamped stream, plus scattered drops. Load average
+  4.4, `pit_node` 50% and `imu_fusion_node` 42% of a core.
+
+### Conclusion
+Supported for the firmware. The remaining loss is on the Pi, between the
+serial read in `pit_node` and the best-effort subscriber; it needs counters in
+the driver. Driving checks (gamepad, RC, switches, stop on release) still to
+run with the drive loop in an interrupt.
+
+---
+
+## TL-015 - 2026-10-25
+
+### Setup
+As TL-014; profiling build of `26d0fd4` plus `UARTRx` on `CommandFramer`
+(frames built from available bytes, no `readBytes`). I2C at 400 kHz.
+
+### Hypothesis
+Without the `readBytes` wait, every thread gets more turns and telemetry
+holds 200 Hz.
+
+### Method
+`scripts/profile_capture.py 60 --probe`; info reply through the new receive
+path.
+
+### Parameters
+| Name | TL-014, 400 kHz | Non-blocking receive | Unit |
+| ---- | --------------- | -------------------- | ---- |
+| `drive_loop` rate | 620.2 | 864.7 | Hz |
+| `drive_loop` period mean / p99 / max | 1.63 / 6.7 / 7.58 | 1.16 / 2.3 / 2.72 | ms |
+| `tx_slot` rate | 194.3 | 200.0 | Hz |
+| `tx_slot` p99 / max | 11.10 / 11.37 | 6.45 / 6.48 | ms |
+| `rx_frame` mean / max | 4213 / 5108 | 8.2 / 9 | us |
+| `cmd_to_pwm` mean / max | 26 / 425 | 10 / 428 | us |
+| Distinct IMU samples | 391 | 503 | per s |
+| Pi-side loss | none measurable | 0.7 | % |
+
+### Observations
+- 60.4 command frames/s accepted, 0 CRC failures, 0 stalled frames.
+- Info reply over the new path: `fw.label=v0.9.0.4-pcb`, `i2c.clock_hz=400000`,
+  both sensors `ok`.
+- The capture first printed 201.4 Hz telemetry and 870.7 Hz drive loop: it
+  divided by the window count while the windows ran slightly over 1 s (60
+  reports over 60.41 s). Rates now come from the report timestamps; the
+  figures above are recomputed that way. Earlier entries are overstated by
+  under 1%.
+
+### Conclusion
+Supported. Drive loop 865 Hz with a 2.7 ms worst period; telemetry at 200 Hz
+with gaps under 6.5 ms. Remaining gap to the targets is round-robin
+scheduling (drive max 2.7 ms against 1.5 ms).
+
+---
+
+## TL-014 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, transmitter off, LED strip on the
+idle charge bar. Profiling build (`teensy41_profile`, `fw.profile=1`) of
+`fc35e3a` plus the measurement suite. Battery 7.61 to 7.41 V over the runs.
+
+### Hypothesis
+Every 1 ms thread runs once per scheduler rotation, so `DriveControl` runs far
+below 1 kHz; blocking I2C transfers set the rotation length.
+
+### Method
+`scripts/profile_capture.py 60` per variant (CSV in `data/`), `--probe` on two
+of them for the Pi-side frame count. Variants: the committed config; 400 kHz
+set only in `setup()`; INA226 read every 10 ms; 400 kHz applied again after
+`lsm.begin()`. Telemetry probe and info reply on the last.
+
+### Parameters
+| Name | 100 kHz, INA 1 ms | 400 kHz in setup | 100 kHz, INA 10 ms | 400 kHz applied after begin | Unit |
+| ---- | ----------------- | ---------------- | ------------------ | --------------------------- | ---- |
+| `drive_loop` rate | 180.6 | 180.2 | 249.5 | 620.2 | Hz |
+| `drive_loop` period mean / p99 / max | 5.57 / 10.0 / 10.2 | 5.56 / 9.4 / 10.0 | 4.03 / 8.75 / 9.76 | 1.63 / 6.7 / 7.58 | ms |
+| `tx_slot` rate | 153.9 | 153.4 | 123.9 | 194.3 | Hz |
+| `tx_slot` p99 / max | 14.75 / 15.25 | 13.70 / 14.54 | 12.05 / 13.41 | 11.10 / 11.37 | ms |
+| `imu_read` | 3937 | 3937 | 3937 | 1090 | us |
+| `power_read` | 995 | 995 | 995 | 275 | us |
+| `rx_frame` mean / max | 1686 / 5101 | 1669 / 5055 | 3123 / 5089 | 4213 / 5108 | us |
+| `led_show` mean / max | 194 / 198 | - | - | 194 / 200 | us |
+| `irq_late` max | 0 | - | - | 0 | us |
+| `cmd_to_pwm` mean / max | 44 / 439 | - | - | 26 / 425 | us |
+| Distinct IMU samples | 181 | 180 | 181 | 391 | per s |
+| Pi-side loss | 0.5 | - | - | none measurable | % |
+
+### Observations
+- Every 1 ms thread ran at the same rate (180.6 Hz at 100 kHz): one turn per
+  scheduler rotation. LSM9DS1 and INA226 reads took 4.9 of the 5.57 ms.
+- `Wire.setClock()` in `setup()` had no effect: Adafruit BusIO's `begin()`
+  calls `Wire.begin()`, which resets the bus to 100 kHz. TL-012 therefore ran
+  at 100 kHz. Applying the clock after `lsm.begin()` cut the reads 3.6x.
+- At 400 kHz the accel, gyro, mag and battery values matched the 100 kHz runs;
+  telemetry probe 192.9 and 196.0 Hz at the Pi, median gap 5.37 ms; info reply
+  `i2c.clock_hz=400000`, both sensors `ok`.
+- `FastLED.show()` costs 194 us and no interrupt ran late by 1 us or more; the
+  LED strip does not block on this FastLED version.
+- `UARTRx` busy-waits in `readBytes` until a whole 474-byte command frame has
+  arrived (5.1 ms on the wire); with shorter rotations it starts earlier and
+  waits longer (4.2 ms mean at 400 kHz, about 25% of the CPU at 60 Hz).
+- `cmd_to_pwm` counts from frame accepted, so it misses time a frame waits in
+  the serial buffer before `UARTRx` runs.
+- `report_lines_dropped` was cumulative in the first run (78 lines from before
+  the capture opened the port); it resets each second from the second run on.
+
+### Conclusion
+Supported. `DriveControl` ran at 181 Hz, not 1 kHz. Blocking I2C at an
+unintended 100 kHz set the rotation; with the clock applied after `begin()`
+the drive loop reached 620 Hz and telemetry 194 Hz. Remaining blockers: the
+`readBytes` wait in `UARTRx`, blocking I2C, and round-robin scheduling
+(drive-loop max 7.6 ms).
+
+---
+
+## TL-013 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop running, transmitter off. Firmware
+`00f6bf2` plus the staged tree: `fw.label`, the measured 15-point charge bar
+curve, and the I2C knob back at 100 kHz. Battery 7.60 to 7.61 V.
+
+### Hypothesis
+At 100 kHz telemetry returns to the 152 Hz of TL-011.
+
+### Method
+`scripts/telemetry_probe.py 10 --runs 3` (checks that `pit_node` is the only
+publisher) with the INA226 read every 10 ms, then the same with every 1 ms.
+Info reply against a host build of the same tree.
+
+### Parameters
+| Name | 100 kHz, INA226 10 ms | 100 kHz, INA226 1 ms | Unit |
+| ---- | --------------------- | -------------------- | ---- |
+| Teensy-stamped rate (runs) | 125.6, 122.4, 124.1 | 152.3, 151.8, 152.8 | Hz |
+| Messages received at the Pi (runs) | 125.9, 118.0, 123.2 | 152.6, 145.4, 132.6 | Hz |
+| Stamp gap median | 8.25 to 8.29 | 6.28 to 6.45 | ms |
+| Stamp gap p99 / max | 10.1 / 14.8 | 10.2 to 11.8 / 13.2 to 15.2 | ms |
+
+### Observations
+- The bus clock had no effect on its own: 100 kHz with the 10 ms INA226 read
+  ran at the TL-012 rate.
+- The first info request failed with a pyserial "multiple access on port"
+  error, since `pit_node` reads the same port; the retry matched the host
+  build (74 keys, `fw.label=dev`, `i2c.clock_hz=100000`).
+- In two of three 1 ms runs the Pi received fewer messages than the Teensy
+  stamps show it sent (145.4 and 132.6 against about 152 Hz).
+- Accel, gyro, mag, battery and RC readings normal in every run.
+
+### Conclusion
+The INA226 poll rate set the telemetry rate: reading the battery less often
+leaves the bus to `ReadIMUStates`, which then busy-waits through more
+scheduler slices. Kept at 1 ms (the previous behavior) until the scheduler
+change. The Pi-side message loss needs a count in the measurement suite.
+
+---
+
+## TL-012 - 2026-10-25
+
+### Setup
+Reference car on a block, teleop service running, after a reboot. Firmware
+`00f6bf2` plus the staged I2C change: `cfg::I2C::clock_hz` 100000 -> 400000,
+INA226 read every 10 ms instead of every 1 ms. Battery 8.05 V.
+
+### Hypothesis
+At 100 kHz one LSM9DS1 read holds the bus about 3 ms and starves `UARTTx`;
+at 400 kHz telemetry rises toward 200 Hz.
+
+### Method
+Telemetry probe (best-effort subscriber, 10 s, one publisher checked each run)
+once on the 100 kHz build after the reboot and three times after the flash.
+Info reply read with `scripts/pit_uart.py --info`.
+
+### Parameters
+| Name | 100 kHz | 400 kHz | Unit |
+| ---- | ------- | ------- | ---- |
+| Telemetry rate (runs) | 151.9; earlier 152.2, 153.6, 153.1 | 127.1, 132.5, 91.8 | Hz |
+| Stamp gap median | 6.25 | 8.20 to 8.30 | ms |
+| Stamp gap p95 | 10.09 | 8.98 to 9.24 | ms |
+| Stamp gap max | 15.20 | 14.48 to 14.82 | ms |
+| Distinct battery voltages | 20.2 | 12.6 to 16.9 | per s |
+
+### Observations
+- The upload failed on the first write and succeeded on the retry (13.4 s).
+- Info reply: `i2c.clock_hz=400000`, `power.poll_ms=10`, `status.imu=ok`,
+  `status.power=ok`. Accel (-0.02, -0.15, +10.00 m/s^2), gyro, mag and
+  battery voltage read normally.
+- The third run counted 917 frames in 10 s against a median gap of 8.3 ms
+  (about 120 Hz).
+- TeensyThreads `delay()` loops on `yield()`, and each thread holds a 1 ms
+  slice (10 ticks of 100 us). A thread busy-waiting on I2C keeps its whole
+  slice, so `UARTTx` runs once per round of all eight contexts.
+
+### Conclusion
+Not supported. Telemetry fell by about 20% and the gaps moved from a 5/10 ms
+mix to a steady 8.2 ms. The rate is bounded by round-robin wake-up of
+`UARTTx`, not by bus time. This run changed the bus clock and the INA226
+poll together; TL-013 separates them: the poll change caused the drop.
+Next action: send telemetry independent of the thread rounds.
+
+---
+
+## TL-011 - 2026-10-25
+
+### Setup
+Reference car on a block, wheels off the ground, teleop service running.
+Firmware built from the clean tree at `00f6bf2`. Battery 7.98 V.
+
+### Hypothesis
+A build from a committed tree reports its commit, clean, and runs as TL-009.
+
+### Method
+`pio run -t upload`; on failure, the same command again. Then
+`python3 scripts/pit_uart.py --info` (teleop still running, as TL-010), a diff
+against a host build of `writeFirmwareInfo` with `FW_GIT_HASH=00f6bf2`, and a
+10 s telemetry probe.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Telemetry rate | 153.3 | Hz |
+| Stamp gap median / p95 / max | 6.23 / 10.09 / 15.07 | ms |
+| Info keys | 72 | - |
+
+### Observations
+- The first upload rebooted the Teensy into HalfKay, then failed with "error
+  writing to Teensy" after 259.7 s (build included). The retry, started with
+  the Teensy already in HalfKay, programmed in 17.2 s. The same pattern
+  occurred in TL-009.
+- Info reply: `fw.git=00f6bf2`, `fw.git_dirty=0`, byte for byte equal to the
+  host build.
+- Telemetry topics, accel, gyro, mag and battery as in TL-009.
+
+### Conclusion
+Supported. Uploads from running firmware fail on the first write on this car;
+rerunning `pio run -t upload` once completes them.
+
+---
+
+## TL-010 - 2026-10-25
+
+### Setup
+As TL-009, new firmware flashed (`e330426` source plus the uncommitted tree,
+`fw.git_dirty=1`). The teleop service could not be stopped without a password
+(polkit), so `pit_node` kept the UART open and reading.
+
+### Hypothesis
+The Teensy answers the info request with the compiled configuration, and the
+reassembly survives lost chunks.
+
+### Method
+`python3 scripts/pit_uart.py --info --yaml firmware.yaml` on `/dev/neo-pit-pcb`
+while `pit_node` ran. Diff the reply against a host build of `writeFirmwareInfo`
+with the same config and commit flags. Probe telemetry for 5 s afterward.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Reply | 1514 | B |
+| Keys | 72 | - |
+| Telemetry after | 151.8 | Hz |
+
+### Observations
+- The reply came back complete and matched the host build byte for byte:
+  `speed.min_mps=0.500`, `speed.max_mps=1.000`, `status.imu=ok`,
+  `status.power=ok`. The YAML wrote cleanly.
+- With two readers on the port, each process saw only part of the byte
+  stream, so chunks were lost; the assembler completed from later cycles.
+- `pit_node` telemetry continued at 151.8 Hz.
+
+### Conclusion
+Supported. In normal use run the tool with teleop stopped; sharing the port
+drops bytes for both readers.
+
+---
+
+## TL-009 - 2026-10-25
+
+### Setup
+Reference car, wheels on the ground and parked, teleop service running
+(driver v0.9.0, `pit_node`). Teensy on the Pi's USB for flashing; dot matrix
+disconnected by that wiring. Firmware: `main` (`e330426` source, indoor speed
+band) before, `release/v0.9.0` staged tree after. FlySky transmitter off.
+Battery 7.42 to 7.47 V.
+
+### Hypothesis
+The new firmware keeps every telemetry topic and value as before and raises
+the telemetry rate toward 200 Hz.
+
+### Method
+Flash with `pio run -t upload` (`teensy-cli`) while teleop runs. Before and
+after, a best-effort rclpy probe subscribes for 15 s to `/imu/lsm9ds1/raw`,
+`/mag/raw`, `/encoder/speed`, `/battery/voltage`, `/rc/channels`, `/rc/link`,
+`/battery/state` and records message rates and the gaps between Teensy-clock
+stamps on `/imu/lsm9ds1/raw`. `journalctl -u racecar-teleop` for link errors.
+
+### Parameters
+| Name | Before | After | Unit |
+| ---- | ------ | ----- | ---- |
+| Telemetry topics rate | 141.6 | 151.4 | Hz |
+| Teensy-stamped rate | 143.1 | 151.3 | Hz |
+| Stamp gap median | 5.81 | 6.27 | ms |
+| Stamp gap p95 | 10.83 | 10.09 | ms |
+| Stamp gap p99 | 10.93 | 11.54 | ms |
+| Stamp gap max | 11.04 | 15.18 | ms |
+| `/battery/state` | 1.0 | 1.0 | Hz |
+
+### Observations
+- Every topic publishes after the flash. Accel (-0.69, -0.03, +9.92 m/s^2),
+  gyro, mag (about -87, +169, -156 uT raw) and battery voltage match the
+  before values within noise. RC link false and all channels -1.0 in both
+  runs (transmitter off).
+- `pit_node` logged one Teensy clock restart and one odometry gap at the
+  flash; no CRC, serial, or reconnect messages.
+- The first upload stalled: the HalfKay bootloader's hidraw device was
+  root-only until `00-teensy.rules` was installed, and the write that started
+  during `udevadm trigger` failed. The retry flashed in 12.9 s.
+
+### Conclusion
+Existing telemetry unchanged. Rate +7%, not 200 Hz: the median gap of
+6.27 ms shows `UARTTx` waking about every 6.3 ms, so the running deadline
+falls behind and resyncs. Not yet checked: the info reply, Pi and RC drive
+paths, slow mode, manual override, LED strip.
+
+---
+
+## TL-008 - 2026-10-25
+
+### Setup
+Host only, on the car's Pi 5 (no flash). PlatformIO 6.2.0, platform teensy
+6.0.0, GCC 13 native. Python 3.12.3, pytest 7.4.4.
+
+### Hypothesis
+The subsystem split and the info reply leave the firmware building and the
+existing logic tests green, and the info payload fits its buffer and one
+telemetry slot.
+
+### Method
+`pio run`, `pio test -e native`, `pytest`, `ruff`, `black --check`, `mypy`
+from the repository root. Baseline: `pio run` and the two test suites on
+`main` (`e330426`) with the libraries the caret ranges resolved on
+2026-10-25.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Info payload | 1514 | B |
+| Info chunks | 12 | - |
+| Info cycle | 60 | ms |
+| Telemetry + largest chunk | 240 | B |
+| Native test cases | 40 | - |
+| Pytest cases | 29 | - |
+
+### Observations
+- teensy41 build SUCCESS. Flash code 86060 -> 90224 B, data 13108 -> 14132 B,
+  RAM1 variables 18912 -> 21952 B (2048 B payload, 512 B transmit buffer).
+  RAM2 unchanged at 12448 B.
+- The baseline build of `main` is 86060 B of code, against 66388 B in TL-007
+  for the same source: the unpinned libraries resolved to newer versions.
+- Baseline tests: native 21/21, pytest 13/13.
+- native: 40/40 passed. pytest: 29/29 passed. ruff, black, mypy clean.
+- The commit string is in the binary (`strings firmware.elf`).
+
+### Conclusion
+Supported on the host. Not run on hardware. Next action: flash the car, run
+`python3 scripts/pit_uart.py --info` with teleop stopped and compare every key
+against `config/config.h`, then repeat TL-002 (drive both directions through
+the ROS mux, wheels up) and measure the telemetry rate on
+`/imu/lsm9ds1/raw`.
+
+---
+
 ## TL-007 - 2026-09-06
 
 ### Setup

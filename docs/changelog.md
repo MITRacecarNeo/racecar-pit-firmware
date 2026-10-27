@@ -5,6 +5,139 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-26
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged; the info reply is additive and only sent on request, so earlier
+drivers run as before. The minor jumps from 0.7 to 0.9 to re-align with the
+driver; there is no 0.8.0 firmware release.
+
+### Added
+- Firmware info reply. The Pi sets `SystemState` bit `0x20`; the Teensy sends
+  the firmware version, commit, compiled configuration, and sensor status as
+  ASCII `key=value` lines in CRC-checked chunks (magic `0xFEEDC0DE`), one chunk
+  after each telemetry frame. Format and keys in `docs/protocol.md`.
+- `src/version.h` and `scripts/build_flags.py`: the build embeds the
+  version, the short commit, and a dirty flag.
+- `scripts/pit_uart.py` (was `racecar-pit-pi/PiUART.py`), a bench tool for the
+  link, with `--info` and `--yaml`, chunk reassembly and typed
+  parsing (`InfoAssembler`, `parse_info`, `info_to_yaml`).
+- Host tests: `tests/test_info` (14 cases) and five RC stick map
+  cases in `test_logic`; info decoding and reassembly in the pytest suite
+  (29 cases). Both suites check the same reference info packet byte for byte.
+- Profiling build `teensy41_profile` (`src/profile.*`, `src/prof_stats.*`):
+  thread periods, section timings, command-to-PWM latency, and interrupt
+  lateness on USB serial; `scripts/profile_capture.py` records and checks
+  them, and `scripts/telemetry_probe.py` measures telemetry at the Pi. Info
+  key `fw.profile`.
+- Watchdog (RTWDOG, 100 ms): refreshed by the drive tick only while every
+  thread, `loop()`, and the drive tick itself run; a hang resets the Teensy,
+  which boots with servo and ESC at neutral. Armed after boot once every
+  context has run. Info keys `watchdog.timeout_ms`, `status.watchdog`,
+  `status.last_reset`, `status.reset_flags`. Test build `teensy41_wdt_test`.
+- `scripts/upload.py`, the upload command: soft reboot, write, and retry a
+  failed write, so `pio run -t upload` completes on the first command.
+- `docs/protocol.md`, `pyproject.toml` (pytest, ruff, black, mypy settings),
+  `data/`.
+- `cfg::I2C::clock_hz`, 400 kHz (the bus ran at 100 kHz before),
+  `cfg::INA226_SENSOR::poll_ms`,
+  `cfg::UART::tx_buffer_bytes`, `cfg::UART::rx_read_timeout_ms`,
+  `cfg::SYS_STATE::info_request`.
+
+### Changed
+- Repository layout: Teensy firmware only. `platformio.ini` at the root,
+  firmware in `src/`, tunables in `config/config.h`, host tests in `tests/`,
+  and the Pi bench tool in `scripts/`. The Pi side of the link lives in
+  `racecar_neo_ros2_driver`.
+- `helpers.cpp` split by subsystem into `shared`, `link`, `drive`, `sensors`,
+  and `displays`. `testPWM` is now the drive tick (`driveTick`); `ledStuffs` is now
+  `updateLedStrip`.
+- `config.h` is Arduino-free. IMU ranges are plain numbers mapped onto the
+  Adafruit enums in `sensors.cpp`; wire constants (magic numbers, channel
+  count, buffer sizes) live in `packets.h`. The host tests read the shipped
+  values instead of mirrored copies.
+- The RC-manual PWM endpoints are compile-time constants
+  (`rc_pwm_min`/`rc_pwm_max`) instead of globals set in `setup()`.
+- The RC stick-to-PWM and stick-to-command maps moved into `drive_map`
+  (`rcThrottleToPwm`, `rcThrottleToNorm`, `mapRange` with Teensyduino's
+  integer rounding) and are host tested.
+- `Serial1` has a 512-byte transmit buffer, so a telemetry frame and an info
+  chunk never wait for the UART.
+- The platform and every library are pinned to exact versions.
+- `scripts/pit_uart.py` defaults to `/dev/neo-pit-pcb`.
+- The charge bar curve is a 15-point measured discharge of the 5000 mAh 2S
+  battery under the car's idle load (was a 10-point rest-voltage
+  approximation that read 13 to 20 points low mid-run).
+- Speed band set to the indoor build the cars run: `min_speed_mps` 0.75 ->
+  0.5 m/s, `max_speed_mps` 5.0 -> 1.0 m/s. The field build raises the ceiling
+  to 4.0 m/s. Slow mode stays at 1.0 m/s.
+- The drive loop runs in a 1 kHz IntervalTimer interrupt instead of a
+  thread, so it keeps its period whatever the threads do. The RC channels and
+  the Pi drive command it reads are shared through sequence counters
+  (`src/seqlock.h`) in place of `RxMutex` and the `CmdMutex` setpoints.
+- The LSM9DS1 is read every 4 ms (250 Hz) and the INA226 every 10 ms; each
+  read blocks about 1.1 ms and 0.28 ms on the bus. New info key
+  `imu.read_hz`.
+- `UARTRx` assembles command frames from the bytes that have arrived
+  (`src/command_framer.*`) instead of waiting in `readBytes` for a whole
+  frame, and drops a partial frame after 20 ms (`rx_read_timeout_ms`; the
+  stream default was 1 s).
+- The `serial_plot` trace prints from `loop()`, and only in a build with
+  `-DRCN_SERIAL_PLOT`.
+- Telemetry is sent from a 200 Hz IntervalTimer interrupt instead of the
+  `UARTTx` thread: every gap between frames is 5.00 ms (was 141.6 Hz). A
+  thread (`InfoBuilder`) builds the info payload into one of two buffers
+  (`src/info_buffers.h`) and the interrupt sends chunks from the other. The IMU and INA226 readings are
+  shared through sequence counters in place of `ImuMutex` and `PowerMutex`.
+- The LSM9DS1 is read as three transfers (accel, gyro, mag) in place of
+  `getEvent()`, which also read the temperature and read the magnetometer
+  twice: 715 us per read instead of 1090 us.
+- Info keys `imu.gyro_odr_hz`, `imu.accel_odr_hz`, `imu.mag_odr_hz`,
+  `imu.mag_range_read_gauss`, and the raw `imu.reg_*` registers, read back
+  from the chip, replace `imu.accel_rate_hz`, which reported the configured
+  accel rate the chip ignores while the gyro runs.
+- Speed loop feedforward refit on the floor (TL-022): `deadband_fwd_us` 75 ->
+  55, `kv_ff_fwd` 10 -> 14, `deadband_rev_us` 70 -> 28, `kv_ff_rev` 40 -> 8,
+  `stiction_kick_rev_us` 100 -> 0, `ki` 30 -> 60. Steady forward error went
+  from +0.21 to +0.25 m/s to +0.02 to +0.04 m/s; reverse from about twice the
+  setpoint, oscillating, to 0.08 to 0.09 m/s fast at 3 s.
+- `speedPID` keeps its output on the target's side of neutral, and in reverse
+  applies `kp_boost` only near a standstill.
+- swA slow mode is now the low pulse (lever up on the FS-i6, its start
+  position); high is fast. A receiver with no signal reads fast. swD is
+  unchanged: high (lever down) is manual override, low or no signal leaves the
+  Pi in control.
+
+### Fixed
+- The speed estimate pushed the latest hall interval into its five-sample
+  average on every drive tick, so one short (bounce) interval read as a full
+  speed spike, up to 1.75 m/s at a 0.5 m/s setpoint. The hall ISR now stores
+  real intervals and the estimate takes their median.
+- One out-of-sequence hall transition flipped the speed sign (4 of 703
+  samples in reverse); a reversal now needs two agreeing transitions
+  (`dir_confirm_transitions`).
+- The `serial_plot` trace blocked `loop()` when nothing read the USB port, and
+  the watchdog reset the board; lines are now skipped while the port is full.
+- `cfg::I2C::clock_hz` never took effect: Adafruit BusIO's `begin()` calls
+  `Wire.begin()`, which resets the bus to 100 kHz. The clock is applied again
+  after the LSM9DS1 starts.
+- The speed estimate was updated by two threads (telemetry and actuation),
+  each pushing samples into the same filter. Only the drive tick updates it
+  now; telemetry reads its result.
+- A sensor missing at boot held the I2C bus in its `begin()` retry loop, so the
+  other sensor never started. Retries now release the bus between attempts.
+- Two sensor threads shared one `errorFlag` and cleared each other's error.
+  Each sensor now has its own presence flag, reported in the info reply.
+
+### Removed
+- The `fillTxBuff` thread, the receive ping/pong copy, and `ReceiveMutex`,
+  `RecPongMutex`, `TransmitMutex`, `SPIMutex`, and `ErrMutex`, each guarding
+  state touched by a single thread.
+- The unused INA226 power read (`getPower`) on every 1 ms cycle.
+- The unused `BasicLinearAlgebra` dependency.
+- `initRxHeader`, whose fields every received frame overwrote.
+- PlatformIO template READMEs in `include/`, `lib/`, and `test/`.
+
 ## [0.7.1] - 2026-09-06
 
 Pairs with `racecar_neo_ros2_driver` v0.7.x. Wire format unchanged.
