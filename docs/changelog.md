@@ -29,7 +29,7 @@ All notable changes to this project. Format: Keep a Changelog
 
 ### Changed
 - Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
-  69 us + 12.5 us per m/s (was 55 + 14), reverse 88 us + 38 us per m/s (was
+  69 us + 12.5 us per m/s (was 55 + 14), reverse 93 us + 38 us per m/s (was
   28 + 8), drawn through the running points above the reverse dead zone.
 - The reverse boost ends at confirmed motion instead of at -0.05 m/s.
 - ESC PWM bounds 800/2200 to 1000/2000 us, equal to the ESC calibration

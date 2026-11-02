@@ -284,7 +284,7 @@ namespace cfg
         // Reverse is drawn through the running points above the ESC's reverse
         // dead zone (about 105 us), not extended into it.
         constexpr float deadband_fwd_us = 69.0f;
-        constexpr float deadband_rev_us = 88.0f;
+        constexpr float deadband_rev_us = 93.0f;
 
         constexpr float kv_ff_fwd = 12.5f;
         constexpr float kv_ff_rev = 38.0f;
