@@ -19,7 +19,7 @@ All notable changes to this project. Format: Keep a Changelog
 - Host tests: five `escCal` cases and three `rawCmdToPwm` cases in `test_logic`;
   `test_esc_cal.py` in the pytest suite (5 cases).
 - Start assist (`src/start_assist.*`): motion counts after 5 hall intervals
-  over 100 ms since standstill in the target direction, so a twitch no longer
+  over 50 ms since standstill in the target direction, so a twitch no longer
   reads as moving. Until then reverse output ramps from 160 to 240 us off
   neutral at 1000 us/s with the integrator frozen; no confirmed motion in
   0.6 s rests at neutral for 0.3 s, then retries. Info keys `pid.start_*`.
@@ -29,8 +29,8 @@ All notable changes to this project. Format: Keep a Changelog
 
 ### Changed
 - Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
-  69 us + 12.5 us per m/s (was 55 + 14), reverse 66 us + 58 us per m/s (was
-  28 + 8).
+  69 us + 12.5 us per m/s (was 55 + 14), reverse 88 us + 38 us per m/s (was
+  28 + 8), drawn through the running points above the reverse dead zone.
 - The reverse boost ends at confirmed motion instead of at -0.05 m/s.
 - ESC PWM bounds 800/2200 to 1000/2000 us, equal to the ESC calibration
   endpoints. RC fast-mode endpoints follow at 25%: 1375/1625 us (were

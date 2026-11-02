@@ -281,11 +281,13 @@ namespace cfg
 
         // Feedforward and gain scheduling.
         // Fitted open loop on the 1000/1500/2000 ESC calibration (docs/test-log.md).
+        // Reverse is drawn through the running points above the ESC's reverse
+        // dead zone (about 105 us), not extended into it.
         constexpr float deadband_fwd_us = 69.0f;
-        constexpr float deadband_rev_us = 66.0f;
+        constexpr float deadband_rev_us = 88.0f;
 
         constexpr float kv_ff_fwd = 12.5f;
-        constexpr float kv_ff_rev = 58.0f;
+        constexpr float kv_ff_rev = 38.0f;
 
         constexpr float kp_boost = 60.0f;
         constexpr float err_threshold = 0.25f;
@@ -294,7 +296,7 @@ namespace cfg
         // intervals since the standstill span start_confirm_us; a twitch is about
         // four edges. Until then the output is at least the per-direction ramp.
         constexpr uint16_t start_confirm_intervals = 5;
-        constexpr uint32_t start_confirm_us = 100000;
+        constexpr uint32_t start_confirm_us = 50000;
         // {from_us, max_us, ramp_us_per_s, timeout_us, rest_us}; max_us 0 is off.
         constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0};
         constexpr StartAssistParams start_assist_rev = {160.0f, 240.0f, 1000.0f, 600000, 300000};
