@@ -293,7 +293,7 @@ static void test_esc_cal_led_bar(void)
 
 // --------------------------- startAssist --------------------------- //
 
-static const StartAssistParams REV = {160.0f, 240.0f, 1000.0f, 600000, 300000};
+static const StartAssistParams REV = {160.0f, 240.0f, 1000.0f, 600000, 300000, 0.5f, 0.8f};
 
 // The twitch seen on the car: four edges, 1 cm, read as -0.4 m/s.
 static void test_motion_twitch_is_not_confirmed(void)
@@ -316,45 +316,79 @@ static void test_motion_needs_intervals_time_and_direction(void)
 static void test_assist_ramps_then_holds(void)
 {
     StartAssist s;
-    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 1000, REV).offset_us);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, 41000, REV).offset_us);
-    TEST_ASSERT_EQUAL_FLOAT(240.0f, startAssistTick(s, -1, false, 300000, REV).offset_us);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 1000, REV).offset_us);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, false, 41000, REV).offset_us);
+    TEST_ASSERT_EQUAL_FLOAT(240.0f, startAssistTick(s, -1, false, false, 300000, REV).offset_us);
 }
 
 static void test_assist_ends_on_confirmed_motion(void)
 {
     StartAssist s;
-    startAssistTick(s, -1, false, 0, REV);
-    const StartAssistOutput out = startAssistTick(s, -1, true, 50000, REV);
+    startAssistTick(s, -1, false, false, 0, REV);
+    const StartAssistOutput out = startAssistTick(s, -1, true, true, 50000, REV);
     TEST_ASSERT_TRUE(out.confirmed);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, out.offset_us);
     // A standstill after confirmed motion starts a fresh ramp.
-    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 900000, REV).offset_us);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 900000, REV).offset_us);
 }
 
 static void test_assist_rests_after_timeout_then_retries(void)
 {
     StartAssist s;
-    startAssistTick(s, -1, false, 0, REV);
-    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, 600000, REV).rest);
-    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, 899999, REV).rest);
-    const StartAssistOutput retry = startAssistTick(s, -1, false, 900000, REV);
+    startAssistTick(s, -1, false, false, 0, REV);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, false, 600000, REV).rest);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, false, 899999, REV).rest);
+    const StartAssistOutput retry = startAssistTick(s, -1, false, false, 900000, REV);
     TEST_ASSERT_FALSE(retry.rest);
     TEST_ASSERT_EQUAL_FLOAT(160.0f, retry.offset_us);
+}
+
+// Confirmed motion below the handover speed keeps the ramp; reaching it hands over.
+static void test_assist_holds_until_handover_speed(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    StartAssistOutput out = startAssistTick(s, -1, true, false, 60000, REV);
+    TEST_ASSERT_FALSE(out.confirmed);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 220.0f, out.offset_us);
+    out = startAssistTick(s, -1, true, true, 90000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, out.offset_us);
+    // Handed over, a dip below the handover speed does not restart the ramp.
+    out = startAssistTick(s, -1, true, false, 120000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+}
+
+// Confirmed but slow at the timeout: hand over instead of resting.
+static void test_assist_hands_over_at_timeout_when_moving(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    const StartAssistOutput out = startAssistTick(s, -1, true, false, 600000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_FALSE(out.rest);
+}
+
+static void test_handover_speed_is_the_lower_of_the_two(void)
+{
+    TEST_ASSERT_FALSE(handoverSpeedReached(-1.0f, -0.49f, REV));
+    TEST_ASSERT_TRUE(handoverSpeedReached(-1.0f, -0.5f, REV));
+    TEST_ASSERT_FALSE(handoverSpeedReached(-0.51f, -0.40f, REV));
+    TEST_ASSERT_TRUE(handoverSpeedReached(-0.51f, -0.41f, REV));
 }
 
 static void test_assist_off_and_direction_change(void)
 {
     StartAssist s;
-    const StartAssistParams off = {0.0f, 0.0f, 0.0f, 0, 0};
-    const StartAssistOutput none = startAssistTick(s, 1, false, 0, off);
+    const StartAssistParams off = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
+    const StartAssistOutput none = startAssistTick(s, 1, false, false, 0, off);
     TEST_ASSERT_FALSE(none.rest);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, none.offset_us);
-    startAssistTick(s, -1, false, 1000, REV);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, 41000, REV).offset_us);
+    startAssistTick(s, -1, false, false, 1000, REV);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, false, 41000, REV).offset_us);
     // Neutral, then reverse again: the ramp starts from the bottom.
-    startAssistTick(s, 0, false, 42000, REV);
-    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 43000, REV).offset_us);
+    startAssistTick(s, 0, false, false, 42000, REV);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 43000, REV).offset_us);
 }
 
 // ----------------------- throttleToTargetMps ---------------------- //
@@ -530,6 +564,9 @@ int main(int, char **)
     RUN_TEST(test_assist_ends_on_confirmed_motion);
     RUN_TEST(test_assist_rests_after_timeout_then_retries);
     RUN_TEST(test_assist_off_and_direction_change);
+    RUN_TEST(test_assist_holds_until_handover_speed);
+    RUN_TEST(test_assist_hands_over_at_timeout_when_moving);
+    RUN_TEST(test_handover_speed_is_the_lower_of_the_two);
     RUN_TEST(test_esc_cal_runs_the_esc_sequence);
     RUN_TEST(test_esc_cal_rejects_out_of_order_steps);
     RUN_TEST(test_esc_cal_quiet_link_returns_to_neutral);

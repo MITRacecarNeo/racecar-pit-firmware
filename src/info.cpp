@@ -205,6 +205,8 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("pid.start_rev_ramp_us_per_s", PID_CTRL::start_assist_rev.ramp_us_per_s, 1);
   w.integer("pid.start_rev_timeout_ms", (int32_t)(PID_CTRL::start_assist_rev.timeout_us / 1000));
   w.integer("pid.start_rev_rest_ms", (int32_t)(PID_CTRL::start_assist_rev.rest_us / 1000));
+  w.fixed("pid.start_rev_handover_mps", PID_CTRL::start_assist_rev.handover_mps, 3);
+  w.fixed("pid.start_rev_handover_frac", PID_CTRL::start_assist_rev.handover_frac, 3);
 
   constexpr float gear_ratio = CAR_SPECS::ratio_motor_to_transaxle * CAR_SPECS::ratio_transaxle_to_diff;
   constexpr uint16_t edges_per_rev = ES2845S_4900KV_MOTOR::pole_pairs * ES2845S_4900KV_MOTOR::hall_states_per_erev;

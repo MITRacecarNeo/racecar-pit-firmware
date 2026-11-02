@@ -140,7 +140,7 @@ values come from `config/config.h` unless noted.
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |
 | `speed.deadband` | 0.010 | normalized commands inside this are stop |
 | `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 60.000, 0.000 | speed loop gains, us per m/s |
-| `pid.ki_rev` | 150.000 | integral gain while the target is reverse |
+| `pid.ki_rev` | 100.000 | integral gain while the target is reverse |
 | `pid.max_integral` | 150.000 | integrator clamp |
 | `pid.kp_boost`, `pid.boost_error_mps` | 60.000, 0.250 | gain above this error |
 | `pid.ff_fwd_us`, `pid.ff_rev_us` | 69.0, 93.0 | static feedforward across the ESC deadband |
@@ -149,6 +149,7 @@ values come from `config/config.h` unless noted.
 | `pid.start_fwd_from_us`, `pid.start_fwd_max_us` | 0.0, 0.0 | forward start assist ramp (0 is off) |
 | `pid.start_rev_from_us`, `pid.start_rev_max_us`, `pid.start_rev_ramp_us_per_s` | 160.0, 320.0, 2000.0 | reverse start assist ramp |
 | `pid.start_rev_timeout_ms`, `pid.start_rev_rest_ms` | 600, 300 | assist time before a neutral rest, rest time |
+| `pid.start_rev_handover_mps`, `pid.start_rev_handover_frac` | 0.500, 0.800 | the assist ends at the lower of this speed and this fraction of the target |
 | `drivetrain.wheel_diameter_m` | 0.0720 | wheel diameter |
 | `drivetrain.gear_ratio` | 0.119628 | wheel rev per motor rev |
 | `encoder.edges_per_motor_rev` | 12 | hall transitions per motor rev |

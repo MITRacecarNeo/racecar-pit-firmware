@@ -10,8 +10,10 @@
 //
 // Until then, in a direction with an assist configured, the output offset from
 // neutral is at least a ramp from `from_us` up to `max_us` at `ramp_us_per_s`.
-// With no confirmed motion after `timeout_us`, the output rests at neutral for
-// `rest_us` and the ramp starts over.
+// The assist keeps the ramp after confirmed motion until the speed reaches the
+// handover speed (the caller's `speed_reached`), or until `timeout_us` with the
+// motion confirmed. With no confirmed motion after `timeout_us`, the output
+// rests at neutral for `rest_us` and the ramp starts over.
 
 struct StartAssistParams
 {
@@ -20,6 +22,8 @@ struct StartAssistParams
   float ramp_us_per_s; // ramp rate
   uint32_t timeout_us; // assist time before a rest
   uint32_t rest_us;    // neutral time before the next try
+  float handover_mps;  // hand over at this speed or handover_frac of the target, whichever is lower
+  float handover_frac;
 };
 
 struct MotionSinceStop
@@ -48,6 +52,9 @@ struct StartAssistOutput
 bool motionConfirmed(const MotionSinceStop &m, int8_t dir, float measured_mps, uint32_t now_us,
                      uint16_t confirm_intervals, uint32_t confirm_us);
 
+// Whether |measured| has reached the handover speed for this target.
+bool handoverSpeedReached(float target_mps, float measured_mps, const StartAssistParams &p);
+
 // One drive tick. dir is the sign of the target (0 resets the assist).
-StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confirmed, uint32_t now_us,
-                                  const StartAssistParams &p);
+StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confirmed, bool speed_reached,
+                                  uint32_t now_us, const StartAssistParams &p);

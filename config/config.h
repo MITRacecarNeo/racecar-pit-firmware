@@ -277,7 +277,7 @@ namespace cfg
         constexpr float ki = 60.0f;
         // Reverse sits on a steep part of the ESC curve, where the feedforward
         // alone lands tenths of a m/s off; the integrator does the tracking.
-        constexpr float ki_rev = 150.0f;
+        constexpr float ki_rev = 100.0f;
         constexpr float max_integral = 150.0f; // anti-windup limit
         constexpr float kd = 0.0f;
         constexpr float kd_filter_alpha = 0.05f;
@@ -300,9 +300,12 @@ namespace cfg
         // four edges. Until then the output is at least the per-direction ramp.
         constexpr uint16_t start_confirm_intervals = 5;
         constexpr uint32_t start_confirm_us = 50000;
-        // {from_us, max_us, ramp_us_per_s, timeout_us, rest_us}; max_us 0 is off.
-        constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0};
-        constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000};
+        // {from_us, max_us, ramp_us_per_s, timeout_us, rest_us, handover_mps,
+        // handover_frac}; max_us 0 is off. Reverse holds the ramp until 0.5 m/s
+        // or 80% of the target: handed over at the first edges, the rotor is too
+        // slow for the running feedforward to carry it.
+        constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
+        constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000, 0.5f, 0.8f};
     }
 
     // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command

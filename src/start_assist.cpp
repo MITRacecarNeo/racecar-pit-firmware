@@ -10,8 +10,18 @@ bool motionConfirmed(const MotionSinceStop &m, int8_t dir, float measured_mps, u
   return dir > 0 ? measured_mps > 0.0f : measured_mps < 0.0f;
 }
 
-StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confirmed, uint32_t now_us,
-                                  const StartAssistParams &p)
+bool handoverSpeedReached(float target_mps, float measured_mps, const StartAssistParams &p)
+{
+  const float target = target_mps < 0.0f ? -target_mps : target_mps;
+  const float measured = measured_mps < 0.0f ? -measured_mps : measured_mps;
+  float handover = p.handover_frac * target;
+  if (p.handover_mps < handover)
+    handover = p.handover_mps;
+  return measured >= handover;
+}
+
+StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confirmed, bool speed_reached,
+                                  uint32_t now_us, const StartAssistParams &p)
 {
   StartAssistOutput out = {false, false, 0.0f};
   if (dir == 0)
@@ -26,8 +36,12 @@ StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confir
     s.try_start_us = now_us;
   }
 
-  // Once confirmed, only a standstill restarts the assist.
-  if (motion_confirmed)
+  const bool enabled = p.max_us > 0.0f;
+  const uint32_t elapsed_try = now_us - s.try_start_us;
+
+  // Hand over once motion is confirmed and the speed is up (or the try has
+  // run its time); after that only a standstill restarts the assist.
+  if (motion_confirmed && (s.confirmed || !enabled || speed_reached || elapsed_try >= p.timeout_us))
   {
     s.confirmed = true;
     s.resting = false;
@@ -40,7 +54,6 @@ StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confir
     s.try_start_us = now_us;
   }
 
-  const bool enabled = p.max_us > 0.0f;
   if (!enabled)
     return out;
 
@@ -56,7 +69,7 @@ StartAssistOutput startAssistTick(StartAssist &s, int8_t dir, bool motion_confir
   }
 
   const uint32_t elapsed = now_us - s.try_start_us;
-  if (elapsed >= p.timeout_us)
+  if (!motion_confirmed && elapsed >= p.timeout_us)
   {
     s.resting = true;
     s.rest_start_us = now_us;

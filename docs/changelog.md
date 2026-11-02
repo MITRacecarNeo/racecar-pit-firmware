@@ -32,7 +32,9 @@ All notable changes to this project. Format: Keep a Changelog
   69 us + 12.5 us per m/s (was 55 + 14), reverse 93 us + 38 us per m/s (was
   28 + 8), drawn through the running points above the reverse dead zone.
 - The reverse boost ends at confirmed motion instead of at -0.05 m/s.
-- Separate reverse integral gain `ki_rev` 150 (forward `ki` stays 60).
+- Separate reverse integral gain `ki_rev` 100 (forward `ki` stays 60).
+- The reverse start assist holds after confirmed motion until 0.5 m/s or 80%
+  of the target, whichever is lower (`handover_mps`, `handover_frac`).
 - Info payload limit 2048 to 3072 B; the payload is about 2.0 kB (16 chunks).
 - ESC PWM bounds 800/2200 to 1000/2000 us, equal to the ESC calibration
   endpoints. RC fast-mode endpoints follow at 25%: 1375/1625 us (were

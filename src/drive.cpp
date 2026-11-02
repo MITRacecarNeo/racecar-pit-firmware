@@ -161,8 +161,10 @@ namespace
     const int8_t dir = target_mps > 0.0f ? 1 : (target_mps < 0.0f ? -1 : 0);
     const bool confirmed =
         motionConfirmed(motion, dir, measured_mps, now_us, start_confirm_intervals, start_confirm_us);
-    const StartAssistOutput assist =
-        startAssistTick(startAssist, dir, confirmed, now_us, dir > 0 ? start_assist_fwd : start_assist_rev);
+    const StartAssistParams &assist_params = dir > 0 ? start_assist_fwd : start_assist_rev;
+    const StartAssistOutput assist = startAssistTick(startAssist, dir, confirmed,
+                                                     handoverSpeedReached(target_mps, measured_mps, assist_params),
+                                                     now_us, assist_params);
     if (assist.rest)
     {
       speedIntegral = 0.0f;
