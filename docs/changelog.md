@@ -20,8 +20,8 @@ All notable changes to this project. Format: Keep a Changelog
   `test_esc_cal.py` in the pytest suite (5 cases).
 - Start assist (`src/start_assist.*`): motion counts after 5 hall intervals
   over 50 ms since standstill in the target direction, so a twitch no longer
-  reads as moving. Until then reverse output ramps from 160 to 240 us off
-  neutral at 1000 us/s with the integrator frozen; no confirmed motion in
+  reads as moving. Until then reverse output ramps from 160 to 320 us off
+  neutral at 2000 us/s with the integrator frozen; no confirmed motion in
   0.6 s rests at neutral for 0.3 s, then retries. Info keys `pid.start_*`.
   Six host tests.
 - `docs/test-log.md` TL-024: open-loop breakaway and running points on the

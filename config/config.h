@@ -299,7 +299,7 @@ namespace cfg
         constexpr uint32_t start_confirm_us = 50000;
         // {from_us, max_us, ramp_us_per_s, timeout_us, rest_us}; max_us 0 is off.
         constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0};
-        constexpr StartAssistParams start_assist_rev = {160.0f, 240.0f, 1000.0f, 600000, 300000};
+        constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000};
     }
 
     // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command

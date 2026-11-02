@@ -193,8 +193,8 @@ From a standstill a twitch of a few hall edges reads as real speed, so motion
 counts as confirmed only after `start_confirm_intervals` (5) hall intervals
 spanning `start_confirm_us` (50 ms) in the target direction
 (`src/start_assist.h`). Until then a per-direction start assist holds the
-output at least on a ramp: reverse from 160 to 240 us off neutral at
-1000 us/s, the integrator frozen. With no confirmed motion after 0.6 s the
+output at least on a ramp: reverse from 160 to 320 us off neutral at
+2000 us/s, the integrator frozen. With no confirmed motion after 0.6 s the
 output rests at neutral for 0.3 s and the ramp starts over. The reverse boost
 ends at confirmed motion. Forward has no assist in the shipped tuning.
 `speed_pwm_min` and `speed_pwm_max` (1000 and
