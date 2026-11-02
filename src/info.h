@@ -8,7 +8,7 @@
 namespace info
 {
     constexpr uint8_t schema_version = 1;
-    constexpr size_t payload_max_bytes = 2048;
+    constexpr size_t payload_max_bytes = 3072;
 }
 
 // LSM9DS1 configuration registers, read back once the IMU starts.

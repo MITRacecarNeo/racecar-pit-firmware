@@ -187,6 +187,7 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
 
   w.fixed("pid.kp", PID_CTRL::kp, 3);
   w.fixed("pid.ki", PID_CTRL::ki, 3);
+  w.fixed("pid.ki_rev", PID_CTRL::ki_rev, 3);
   w.fixed("pid.kd", PID_CTRL::kd, 3);
   w.fixed("pid.max_integral", PID_CTRL::max_integral, 3);
   w.fixed("pid.kp_boost", PID_CTRL::kp_boost, 3);

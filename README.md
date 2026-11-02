@@ -145,8 +145,8 @@ settings.
 
 The Pi sets bit `0x20` of `SystemState`. While it is set, the Teensy sends one
 info chunk after each telemetry frame, so telemetry keeps its rate. The
-payload is ASCII `key=value` lines (about 1.5 kB in 12 chunks, 60 ms per
-cycle). Keys and the reassembly rules are in
+payload is ASCII `key=value` lines (about 2.0 kB in 16 chunks, 80 ms per
+cycle; limit 3072 B). Keys and the reassembly rules are in
 [docs/protocol.md](docs/protocol.md#info-reply).
 
 On the bench, with the teleop service stopped:

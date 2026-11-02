@@ -89,8 +89,9 @@ The Teensy rebuilds the payload at the start of each cycle. `IDNumber`
 changes only when the payload content does (a sensor found after boot), so
 the Pi restarts collection when the revision, chunk count, or `FrameBytes`
 changes, and never joins chunks of two payloads. A lost chunk comes round
-again in the next cycle; a full cycle of the current payload (1514 B, 12
-chunks) takes 60 ms.
+again in the next cycle; a full cycle of the current payload (about 2.0 kB,
+16 chunks) takes about 80 ms. The firmware holds up to 3072 B
+(`info::payload_max_bytes`).
 
 One telemetry frame plus the largest chunk is 240 B, 2.6 ms on the wire,
 inside the 5 ms slot. Firmware without the info reply never answers; the
@@ -139,6 +140,7 @@ values come from `config/config.h` unless noted.
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |
 | `speed.deadband` | 0.010 | normalized commands inside this are stop |
 | `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 60.000, 0.000 | speed loop gains, us per m/s |
+| `pid.ki_rev` | 150.000 | integral gain while the target is reverse |
 | `pid.max_integral` | 150.000 | integrator clamp |
 | `pid.kp_boost`, `pid.boost_error_mps` | 60.000, 0.250 | gain above this error |
 | `pid.ff_fwd_us`, `pid.ff_rev_us` | 69.0, 93.0 | static feedforward across the ESC deadband |

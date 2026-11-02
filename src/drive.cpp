@@ -184,7 +184,8 @@ namespace
     // Integrate only off the limits, or when the error pushes back into range.
     const float pwm_lo = target_mps > 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_min;
     const float pwm_hi = target_mps < 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_max;
-    const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    const float active_ki = dir < 0 ? ki_rev : ki;
+    const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
     const bool hit_upper_limit = (predicted_pwm >= pwm_hi) && (err > 0);
     const bool hit_lower_limit = (predicted_pwm <= pwm_lo) && (err < 0);
     // Frozen while the start assist holds the output, so the hand-off at
@@ -194,7 +195,7 @@ namespace
       speedIntegral += err * dt;
     speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
 
-    float final_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    float final_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
     if (assisting)
     {
       const float assist_pwm = speed_pwm_neutral + dir * assist.offset_us;
