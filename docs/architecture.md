@@ -37,6 +37,7 @@ I/O. There is no RTOS and no dynamic allocation after boot.
 | `src/info_buffers.h` | Two info payload buffers handed from `InfoBuilder` to the telemetry tick; Arduino-free | none |
 | `src/drive.{h,cpp}` | Drive tick (1 kHz interrupt), speed PID, hall ISR and speed estimate | `drive_map`, `shared`, Servo, IntervalTimer |
 | `src/seqlock.h` | Single-writer value readable from an interrupt; Arduino-free | none |
+| `src/esc_cal.{h,cpp}` | ESC calibration steps, status line and LED bar for the calibration build; Arduino-free | none |
 | `src/command_framer.{h,cpp}` | Command frame assembly from the UART byte stream; Arduino-free | `packets`, `crc16` |
 | `src/sensors.{h,cpp}` | `ReadCurrAndVolt`, `ReadIMUStates`, `RxReceive` | INA226, Adafruit LSM9DS1, PPM-reader |
 | `src/displays.{h,cpp}` | `DotMatrix` thread, `updateLedStrip` | MD_Parola, FastLED, `battery` |

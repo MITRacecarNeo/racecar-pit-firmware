@@ -4,6 +4,74 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-024 - 2026-11-02
+
+### Setup
+Car on a laminate floor: a lane about 3 m long for breakaway, a longer lane
+for running points, both about 0.7 m wide with lidar stops at the end
+(0.3 m plus 0.6 m per m/s) and the sides (0.30 m from the lidar). ESC as
+found: items 3,4,3,5,3,2,1,2,1,9,1,1, throttle calibration unrecorded.
+Raw-PWM build (`teensy41_raw_pwm`, `fw.speed_control=raw_pwm`): a Pi command
+n drives the ESC at 1500 + 1000 * n us, open loop. Battery 7.79 V at rest.
+Pi publishes `/drive` while RB is held; steering holds the gyro heading
+(at most 0.15) with the gyro bias learned at rest.
+
+### Hypothesis
+The open-loop PWM-to-speed line matches the v0.9.0 feedforward fitted in
+TL-022 (forward 55 us + 14 us per m/s, reverse 28 us + 8 us per m/s).
+
+### Method
+- Breakaway: from standstill, offsets in 5 us steps, 1 s each, 1 s neutral
+  between. A step counts when speed stays at 0.05 m/s or more for 0.3 s; the
+  output then goes to neutral. Breakaway is the first step to count 3 times
+  in a row.
+- Running points: launch at 80 us until speed holds 0.5 m/s (0.9 m/s for one
+  run) for 0.1 s, then hold one offset. Steady speed is the mean of the last
+  1 s; a run whose speed drifts more than 0.05 m/s per s there is not settled.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Breakaway step, hold, rest | 5, 1.0, 1.0 | us, s, s |
+| Sustained motion | 0.3 at 0.05 | s at m/s |
+| Running hold | 2.5 to 5.0 | s |
+| Raw-PWM offset limit | 300 | us |
+| Current stop | 16 A for 0.5 s | - |
+
+### Observations
+| Direction | Offset | Result |
+| --------- | ------ | ------ |
+| Forward | 40 to 70 us | no start; 2.4 to 3.7 A (idle 2.2 A); 65 and 70 us twitch only |
+| Forward | 75 us | starts 3 of 3 in 0.07 to 0.19 s, 63 to 75% moving, 4.2 A |
+| Forward | 58, 62 us | launched car coasts to a stop within 0.3 s |
+| Forward | 66 us | 0.67 m/s, sd 0.03, settled for 4 s |
+| Forward | 70 us | 1.03 m/s, sd 0.05, over 0.75 s (side stop) |
+| Reverse | 20 to 30 us | no start, 2.3 to 2.6 A |
+| Reverse | 35 to 65 us | twitch then lock: 0.12 s of motion (1 cm), current 3.0 to 9.9 A rising with the offset |
+| Reverse | 65 to 75 us | starts or locks per try: 65 us 1 of 3, 70 us 2 of 3 (one lock at 11.8 A), 75 us 3 of 3 (one cut by the end stop while moving); 8.7 to 12.5 A |
+| Reverse | 40 us | 1.05 m/s, sd 0.05, settled for 2.4 s |
+| Reverse | 35 us | 0.62 m/s and still slowing 0.08 m/s per s |
+
+- Each twitch read -0.36 to -0.45 m/s in the speed estimate while the car
+  moved about 1 cm: the median of the first few hall intervals.
+- Reverse starts lunge: 0.35 to 0.8 m per burst by the encoder (the operator
+  saw 1 to 2 m), peaks 1.1 to 2.2 m/s, about 0.7 s of coasting after neutral.
+  Launches at 80 us peaked at 14.3 to 14.5 A.
+- Open loop below 70 us forward settles within about 0.3 s from a 0.5 m/s
+  launch; at 70 us it is still rising after 2.6 s from 0.5 m/s.
+- At rest the fused gyro drifted -0.77 deg/s; a 90 deg hand turn read
+  +88 deg.
+
+### Conclusion
+Supported within about 4 us. Forward: 66 us gives 0.67 m/s against 64.4 us
+from the v0.9.0 line; 70 us gives 1.03 m/s against 69.4 us. Reverse: 40 us
+gives 1.05 m/s against 36.4 us; the slope from 35 and 40 us is about
+11 us per m/s against 8. Starting needs about 75 us both ways, above the
+running offsets (forward 64 to 70 us, reverse 35 to 40 us for 0.6 to
+1.05 m/s), and reverse below 70 us locks at up to 12 A instead of turning.
+
+---
+
 ## TL-023 - 2026-10-26
 
 ### Setup

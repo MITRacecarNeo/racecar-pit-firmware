@@ -24,6 +24,7 @@ format in `src/packets.h` and the version numbers that select a matching pair; s
 - [RC receiver](#rc-receiver)
 - [Idle displays](#idle-displays)
 - [Build and flash](#build-and-flash)
+- [ESC calibration](#esc-calibration)
 - [Tests](#tests)
 - [Architecture](#architecture)
 - [Changelog](#changelog)
@@ -187,8 +188,9 @@ standstill. The output stays on the setpoint's side of neutral, because a
 forward pulse while reversing makes this ESC brake. The integrator only
 accumulates when the output is off its limit or the error pushes back toward
 the usable range. `stiction_kick_rev_us` adds reverse PWM while the wheels are
-still (0 in the shipped tuning). `speed_pwm_min` sits deeper than a symmetric
-forward throw to clear the reverse deadband. On the floor the loop holds 0.5,
+still (0 in the shipped tuning). `speed_pwm_min` and `speed_pwm_max` (1000 and
+2000 us) equal the ESC throttle calibration endpoints (see
+[ESC calibration](#esc-calibration)). On the floor the loop holds 0.5,
 0.75 and 1.0 m/s within 0.04 m/s forward; reverse runs 0.08 to 0.09 m/s fast
 after 3 s and is still converging (`docs/test-log.md`, TL-022).
 
@@ -343,6 +345,34 @@ serial port from `loop()` every 25 ms, so it samples the 1 kHz loop rather
 than following every tick. Lines are skipped while nothing reads the port.
 Flash the plain build afterward.
 
+Two test builds replace the drive behavior; never ship either:
+
+| Environment | `fw.speed_control` | Behavior |
+| ----------- | ------------------ | -------- |
+| `teensy41_esc_cal` | `esc_cal` | ESC held at one calibration step, chosen by `scripts/esc_cal.py`; no driving |
+| `teensy41_raw_pwm` | `raw_pwm` | Pi command n drives the ESC open loop at 1500 + 1000 * n us (limit +/- 300 us); RC unchanged |
+
+## ESC calibration
+
+The ESC stores its own throttle range. Every car is calibrated to the
+firmware's PWM bounds: 1500 us neutral, 2000 us full forward, 1000 us full
+reverse. A car calibrated to other endpoints responds differently to the same
+PWM, and the speed-loop feedforward no longer fits it.
+
+1. Flash the calibration build: `pio run -e teensy41_esc_cal -t upload`.
+2. Run `python3 scripts/esc_cal.py` on the Pi with the Teensy USB cable
+   plugged in, and follow its prompts. The car is on a stand with the wheels
+   off the ground, and the ESC enters calibration mode from its SET button.
+3. The LED strip shows the held step as a purple bar from both ends: one LED
+   per end at full reverse, half the strip at neutral, the whole strip at full
+   forward.
+4. Flash the normal firmware: `pio run -e teensy41 -t upload`.
+
+The build accepts full forward only from neutral and full reverse only from
+full forward. A held step returns to neutral when USB serial has been quiet
+for 2 s (`cfg::ESC_CAL::link_timeout_ms`); the script polls every 0.5 s. The
+script sends no throttle until the operator confirms the ESC LED is flashing.
+
 ## Tests
 
 Host unit tests over the Arduino-free logic, from the repository root:
@@ -398,6 +428,12 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [Unreleased]
+- ESC calibration build `teensy41_esc_cal` and `scripts/esc_cal.py`; purple
+  LED bar for the held step.
+- Raw-PWM test build `teensy41_raw_pwm` for PWM-to-speed sweeps.
+- ESC PWM bounds 1000/2000 us (were 800/2200); RC fast mode 1375/1625 us.
 
 ### [0.9.0] - 2026-10-26
 Pairs with driver v0.9.x; telemetry and command sizes unchanged.

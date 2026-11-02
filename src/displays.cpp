@@ -7,6 +7,8 @@
 
 #include "battery.h"
 #include "config.h"
+#include "drive.h"
+#include "esc_cal.h"
 #include "profile.h"
 #include "watchdog.h"
 #include "shared.h"
@@ -117,6 +119,18 @@ void updateLedStrip()
   for (int i = 0; i < N; i++)
     leds[i] = CRGB::Black;
 
+#ifdef RCN_ESC_CAL
+  // Calibration build: a purple bar from both ends shows the held PWM, from
+  // one LED per end at full reverse to the whole strip at full forward.
+  const int cal_half = escCalLedHalf(escCalPwmUs(), cfg::ESC_10BL60_G2::speed_pwm_min,
+                                     cfg::ESC_10BL60_G2::speed_pwm_max, N / 2);
+  for (int i = 0; i < cal_half; i++)
+  {
+    leds[i] = CRGB::Purple;
+    leds[N - 1 - i] = CRGB::Purple;
+  }
+  (void)starting;
+#else
   if (starting)
   {
     const uint32_t elapsed = millis() - load_start;
@@ -141,6 +155,7 @@ void updateLedStrip()
       leds[N - 1 - i] = CRGB::Red;
     }
   }
+#endif
 
   PROF_START(t_show);
   FastLED.show();

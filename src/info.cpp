@@ -157,7 +157,13 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.integer("fw.profile", 0);
 #endif
   w.integer("fw.protocol", wire::protocol_version);
+#if defined(RCN_ESC_CAL)
+  w.text("fw.speed_control", "esc_cal");
+#elif defined(RCN_RAW_PWM)
+  w.text("fw.speed_control", "raw_pwm");
+#else
   w.text("fw.speed_control", "closed_loop");
+#endif
 
   w.integer("link.baud", (int32_t)UART::baud_rate);
   w.integer("link.telemetry_hz", UART::tx_freq);

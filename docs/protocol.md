@@ -126,14 +126,14 @@ values come from `config/config.h` unless noted.
 | `fw.board` | teensy41 | target board |
 | `fw.profile` | 0 | 1 in the profiling build (`teensy41_profile`) |
 | `fw.protocol` | 1 | header `VersionNum` |
-| `fw.speed_control` | closed_loop | Pi throttle is a speed setpoint on the encoder |
+| `fw.speed_control` | closed_loop | Pi throttle is a speed setpoint on the encoder; `esc_cal` and `raw_pwm` in the test builds |
 | `link.baud` | 921600 | UART baud |
 | `link.telemetry_hz` | 200 | telemetry slot rate |
 | `link.cmd_timeout_ms` | 50 | stale command falls to neutral |
 | `link.cmd_crc` | 1 | command CRC enforced |
 | `steer.pwm_min_us`, `steer.pwm_center_us`, `steer.pwm_max_us` | 1025, 1500, 1975 | servo PWM at -1, 0, +1 (-1 = full left) |
-| `esc.pwm_min_us`, `esc.pwm_neutral_us`, `esc.pwm_max_us` | 800, 1500, 2200 | ESC PWM bounds |
-| `esc.rc_pwm_min_us`, `esc.rc_pwm_max_us` | 1325, 1675 | RC fast-mode PWM endpoints |
+| `esc.pwm_min_us`, `esc.pwm_neutral_us`, `esc.pwm_max_us` | 1000, 1500, 2000 | ESC PWM bounds, equal to the ESC calibration endpoints |
+| `esc.rc_pwm_min_us`, `esc.rc_pwm_max_us` | 1375, 1625 | RC fast-mode PWM endpoints |
 | `speed.min_mps` | 0.500 | setpoint just past the deadband |
 | `speed.max_mps` | 1.000 | setpoint at full command |
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |

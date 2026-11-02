@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 
 // Hall pins and their interrupts; call once from setup().
 void initHallEncoder();
@@ -7,6 +8,11 @@ void initHallEncoder();
 // arbitration, the speed loop, and servo and ESC PWM. Sole writer of
 // measured_speed_mps, manual_override and rc_driving.
 void startDriveControl();
+
+// Calibration build (RCN_ESC_CAL): the PWM the drive tick holds on the ESC.
+// Written from loop(), read by the drive tick and the LED strip.
+void setEscCalPwm(uint16_t pwm_us);
+uint16_t escCalPwmUs();
 
 // Prints the speed-loop trace when cfg::DEBUG::serial_plot is set; call from
 // loop().

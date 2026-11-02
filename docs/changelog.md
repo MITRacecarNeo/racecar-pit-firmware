@@ -5,6 +5,27 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+- ESC calibration build `teensy41_esc_cal` (`src/esc_cal.*`, `RCN_ESC_CAL`): holds
+  the ESC at neutral, full forward or full reverse in order, chosen over USB
+  serial; the LED strip shows the held step as a purple bar; a held step
+  returns to neutral after 2 s without serial traffic. `fw.speed_control=esc_cal`.
+- `scripts/esc_cal.py`: steps the calibration build through the ESC's SET
+  button sequence, with a keepalive; no throttle until the operator confirms
+  the ESC is in calibration mode.
+- Raw-PWM test build `teensy41_raw_pwm` (`RCN_RAW_PWM`): Pi command n drives the
+  ESC open loop at 1500 + 1000 * n us, limited to +/- 300 us, for measuring the
+  PWM-to-speed curve. `fw.speed_control=raw_pwm`.
+- Host tests: five `escCal` cases and three `rawCmdToPwm` cases in `test_logic`;
+  `test_esc_cal.py` in the pytest suite (5 cases).
+- `docs/test-log.md` TL-024: open-loop breakaway and running points on the
+  0.9.0 ESC setup.
+
+### Changed
+- ESC PWM bounds 800/2200 to 1000/2000 us, equal to the ESC calibration
+  endpoints. RC fast-mode endpoints follow at 25%: 1375/1625 us (were
+  1325/1675).
+
 ## [0.9.0] - 2026-10-26
 
 Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are

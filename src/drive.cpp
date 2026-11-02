@@ -209,6 +209,8 @@ namespace
   RcChannels rc_last = {};
   DriveCommand cmd_last = {0.0f, 0.0f};
 
+  volatile uint16_t esc_cal_pwm_us = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+
   // For the serial trace, printed from loop().
   volatile float trace_target_mps = 0.0f;
   volatile float trace_measured_mps = 0.0f;
@@ -305,6 +307,16 @@ namespace
 
     float target_mps = 0.0f;
     uint16_t throt_out;
+#ifdef RCN_RAW_PWM
+    if (closed_loop && !rc_active)
+    {
+      throt_out = rawCmdToPwm(norm_cmd, db, cfg::RAW_PWM_TEST::us_per_unit, cfg::RAW_PWM_TEST::max_offset_us,
+                              cfg::ESC_10BL60_G2::speed_pwm_min, cfg::ESC_10BL60_G2::speed_pwm_neutral,
+                              cfg::ESC_10BL60_G2::speed_pwm_max);
+      resetSpeedLoop();
+    }
+    else
+#endif
     if (closed_loop)
     {
       target_mps = throttleToTargetMps(norm_cmd, db, cfg::PID_CTRL::min_speed_mps, speed_cap);
@@ -316,6 +328,13 @@ namespace
       resetSpeedLoop();
     }
 
+#ifdef RCN_ESC_CAL
+    // Calibration build: no driving; the ESC sees only the held step.
+    steer_out = cfg::SERVO_D135F::angle_pwm_neutral;
+    throt_out = esc_cal_pwm_us;
+    target_mps = 0.0f;
+    resetSpeedLoop();
+#endif
     steerServo.writeMicroseconds(steer_out);
     throtMot.writeMicroseconds(throt_out);
     PROF_SECTION(drive_body, t_body);
@@ -326,6 +345,16 @@ namespace
     trace_measured_mps = measured_mps;
     trace_pwm = throt_out;
   }
+}
+
+void setEscCalPwm(uint16_t pwm_us)
+{
+  esc_cal_pwm_us = pwm_us;
+}
+
+uint16_t escCalPwmUs()
+{
+  return esc_cal_pwm_us;
 }
 
 void startDriveControl()

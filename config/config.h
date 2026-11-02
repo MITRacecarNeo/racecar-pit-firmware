@@ -72,9 +72,11 @@ namespace cfg
 
         // PWM safety bounds. The Pi does not scale the range, so the Teensy owns
         // the physical limits.
-        constexpr uint16_t speed_pwm_min = 800;      // us, full-reverse bound; deeper than 1000 to clear the ESC reverse deadband
+        // Equal to the ESC throttle calibration endpoints (env teensy41_esc_cal);
+        // past them the ESC gives no more throttle.
+        constexpr uint16_t speed_pwm_min = 1000;     // us, full-reverse bound
         constexpr uint16_t speed_pwm_neutral = 1500; // us, ESC arm / neutral
-        constexpr uint16_t speed_pwm_max = 2200;     // us, full-forward bound
+        constexpr uint16_t speed_pwm_max = 2000;     // us, full-forward bound
 
         // RC-manual PWM endpoints on the direct (fast-mode) path.
         constexpr uint16_t rc_pwm_max = speed_demon
@@ -290,6 +292,26 @@ namespace cfg
         // wide for the PI term alone.
         constexpr float stiction_kick_rev_us = 0.0f; // 0 disables
         constexpr float stiction_speed_mps = 0.05f; // below this the wheels count as stopped
+    }
+
+    // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command
+    // drives the ESC open loop at 1500 + command * us_per_unit us, for
+    // measuring the PWM-to-speed curve. RC driving is unchanged. Never ship it.
+    namespace RAW_PWM_TEST
+    {
+        constexpr float us_per_unit = 1000.0f; // command 0.001 = 1 us
+        constexpr float max_offset_us = 300.0f;
+    }
+
+    // ESC calibration build (-DRCN_ESC_CAL, env teensy41_esc_cal): holds the
+    // ESC at one calibration step at a time, chosen over USB serial by
+    // scripts/esc_cal.py; Pi and RC driving are off. The LED strip shows the
+    // held PWM in purple. Never ship it.
+    namespace ESC_CAL
+    {
+        // A step away from neutral falls back to neutral when USB serial goes
+        // quiet this long (the script polls every 0.5 s).
+        constexpr uint32_t link_timeout_ms = 2000;
     }
 
     // Invariants the actuation math assumes. A bad edit here is a runaway servo

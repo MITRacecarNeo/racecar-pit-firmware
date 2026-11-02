@@ -120,10 +120,10 @@ static void test_payload_reports_the_compiled_config(void)
     TEST_ASSERT_EQUAL_STRING("1025", valueOf("steer.pwm_min_us"));
     TEST_ASSERT_EQUAL_STRING("1500", valueOf("steer.pwm_center_us"));
     TEST_ASSERT_EQUAL_STRING("1975", valueOf("steer.pwm_max_us"));
-    TEST_ASSERT_EQUAL_STRING("800", valueOf("esc.pwm_min_us"));
-    TEST_ASSERT_EQUAL_STRING("2200", valueOf("esc.pwm_max_us"));
-    TEST_ASSERT_EQUAL_STRING("1325", valueOf("esc.rc_pwm_min_us"));
-    TEST_ASSERT_EQUAL_STRING("1675", valueOf("esc.rc_pwm_max_us"));
+    TEST_ASSERT_EQUAL_STRING("1000", valueOf("esc.pwm_min_us"));
+    TEST_ASSERT_EQUAL_STRING("2000", valueOf("esc.pwm_max_us"));
+    TEST_ASSERT_EQUAL_STRING("1375", valueOf("esc.rc_pwm_min_us"));
+    TEST_ASSERT_EQUAL_STRING("1625", valueOf("esc.rc_pwm_max_us"));
     TEST_ASSERT_EQUAL_STRING("0.500", valueOf("speed.min_mps"));
     TEST_ASSERT_EQUAL_STRING("1.000", valueOf("speed.max_mps"));
     TEST_ASSERT_EQUAL_STRING("1.000", valueOf("speed.slow_mps"));

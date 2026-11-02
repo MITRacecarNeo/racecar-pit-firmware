@@ -1,4 +1,5 @@
 #include "drive_map.h"
+#include <math.h>
 
 uint16_t mapNormToPwm(float n, uint16_t lo, uint16_t neu, uint16_t hi)
 {
@@ -107,6 +108,24 @@ float throttleToTargetMps(float motor, float deadband, float min_mps, float max_
   }
   float scale = (motor + deadband) / (-1.0f + deadband);
   return -min_mps - scale * (max_mps - min_mps);
+}
+
+uint16_t rawCmdToPwm(float motor, float deadband, float us_per_unit, float max_offset_us, uint16_t pwm_min,
+                     uint16_t pwm_neutral, uint16_t pwm_max)
+{
+  if (!(fabsf(motor) > deadband))
+    return pwm_neutral;
+  float offset = motor * us_per_unit;
+  if (offset > max_offset_us)
+    offset = max_offset_us;
+  if (offset < -max_offset_us)
+    offset = -max_offset_us;
+  float pwm = (float)pwm_neutral + roundf(offset);
+  if (pwm < (float)pwm_min)
+    pwm = (float)pwm_min;
+  if (pwm > (float)pwm_max)
+    pwm = (float)pwm_max;
+  return (uint16_t)pwm;
 }
 
 int32_t mapRange(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max)
