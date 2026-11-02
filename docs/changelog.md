@@ -5,6 +5,12 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-02
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged. Every car needs the ESC calibration below; the speed-loop constants
+are fitted to it.
+
 ### Added
 - ESC calibration build `teensy41_esc_cal` (`src/esc_cal.*`, `RCN_ESC_CAL`): holds
   the ESC at neutral, full forward or full reverse in order, chosen over USB

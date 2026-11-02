@@ -56,6 +56,7 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
+| 0.9.x | 0.9.1 | sizes unchanged; needs the ESC calibration |
 | 0.9.x | 0.9.0 | sizes unchanged; adds the info reply |
 | 0.7.4 - 0.9.0 | 0.7.1 | unchanged |
 | 0.6.0 | none tagged; run 0.5.0 | unchanged |
@@ -440,11 +441,21 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 
 Latest entries; full history in `docs/changelog.md`.
 
-### [Unreleased]
-- ESC calibration build `teensy41_esc_cal` and `scripts/esc_cal.py`; purple
-  LED bar for the held step.
-- Raw-PWM test build `teensy41_raw_pwm` for PWM-to-speed sweeps.
-- ESC PWM bounds 1000/2000 us (were 800/2200); RC fast mode 1375/1625 us.
+### [0.9.1] - 2026-11-02
+Pairs with driver v0.9.x; telemetry and command sizes unchanged. Every car
+needs the ESC calibration (see [ESC calibration](#esc-calibration)).
+- Added: ESC calibration build `teensy41_esc_cal` and `scripts/esc_cal.py`
+  (purple LED bar for the held step); raw-PWM sweep build `teensy41_raw_pwm`;
+  speed-loop trace build `teensy41_trace`.
+- Added: start assist. Motion counts after sustained hall intervals, so a
+  twitch no longer reads as moving; reverse ramps 160 to 320 us until
+  0.5 m/s or 80% of the target, with a timed rest and retry.
+- Changed: ESC PWM bounds 1000/2000 us (were 800/2200); RC fast mode
+  1375/1625 us. Feedforward refit: forward 69 + 12.5/m/s, reverse
+  94 + 55/m/s. `kp_boost` in both directions; `ki_rev`.
+- Changed: build stamp in a generated header, so a new commit rebuilds one
+  file.
+- Removed: `stiction_kick_rev_us`, `stiction_speed_mps`.
 
 ### [0.9.0] - 2026-10-26
 Pairs with driver v0.9.x; telemetry and command sizes unchanged.

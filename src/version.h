@@ -6,7 +6,7 @@ namespace fw
 {
     constexpr uint8_t version_major = 0;
     constexpr uint8_t version_minor = 9;
-    constexpr uint8_t version_patch = 0;
+    constexpr uint8_t version_patch = 1;
 }
 
 // Set by scripts/build_flags.py on firmware builds, in the generated

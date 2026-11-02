@@ -107,7 +107,7 @@ static void test_payload_starts_with_schema_and_version(void)
 {
     buildPayload();
     TEST_ASSERT_EQUAL_INT(0, strncmp(payload, "info=1\n", 7));
-    TEST_ASSERT_EQUAL_STRING("0.9.0", valueOf("fw.version"));
+    TEST_ASSERT_EQUAL_STRING("0.9.1", valueOf("fw.version"));
     TEST_ASSERT_EQUAL_STRING("unknown", valueOf("fw.git"));
     TEST_ASSERT_EQUAL_STRING("dev", valueOf("fw.label"));
     TEST_ASSERT_EQUAL_STRING("0", valueOf("fw.profile"));

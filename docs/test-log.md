@@ -4,6 +4,72 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-026 - 2026-11-02
+
+### Setup
+Same car and floor as TL-025, normal and trace builds (`teensy41_trace`) of
+`v0.9.1.2-pcb` to `v0.9.1.10-pcb`. Pi publishes `/drive` while RB is held,
+one normalized command per run from standstill. Battery 7.4 to 7.9 V, then a
+charged battery at 8.3 V from the `ki_rev` 150 rerun on.
+
+### Hypothesis
+With motion confirmed only after sustained hall intervals and a reverse start
+assist, the closed loop starts reverse every time and holds 0.51 and 0.75 m/s
+within 0.10 m/s.
+
+### Method
+Closed-loop starts at commands 0.02 (0.51 m/s) and 0.505 (0.75 m/s), held
+2 s (one run 3 s, one 4 s). Start time is the first sample of 0.3 s of
+continuous motion at 0.05 m/s or more; hold speed is the mean of the last 1 s.
+The trace build logs target, measured speed and ESC PWM every 25 ms.
+
+### Parameters
+| Build | Reverse feedforward | Reverse start ramp | Handover | `ki_rev` | Reverse boost |
+| ----- | ------------------- | ------------------ | -------- | -------- | ------------- |
+| .2 | 66 + 58/m/s | 160 to 240 us at 1000 us/s | at 5 intervals over 100 ms | 60 | off once moving |
+| .3 | 88 + 38/m/s | same | over 50 ms | 60 | off |
+| .4 | 88 + 38/m/s | 160 to 320 us at 2000 us/s | same | 60 | off |
+| .5 | 93 + 38/m/s | same | same | 60 | off |
+| .6 | same | same | same | 150 | off |
+| .7 | same | same | until 0.5 m/s or 80% of target | 100 | off |
+| .9 | same | same | same | 60 | on |
+| .10 | 94 + 55/m/s | same | same | 60 | on |
+
+### Observations
+| Build | Target | Starts (0.3 s motion) | Hold speed, last 1 s |
+| ----- | ------ | --------------------- | -------------------- |
+| .2 | 0.51 | 3 of 3 after 0.07 to 0.75 s, several locked tries first | 0.37 to 0.62 |
+| .3 | 0.51 | 0 of 9 tries; each locked at 12 A for 0.6 s | - |
+| .4 | 0.51 | 6 of 6 in 0.23 to 1.16 s, starts at 16.38 A | 0.35 to 0.40 |
+| .5 | 0.51 | 6 of 6 in 0.22 to 0.35 s | 0.35 to 0.48; 3 s hold 0.44 |
+| .5 | 0.75 | 3 of 3 in 0.21 to 0.25 s | 0.62, 0.68 |
+| .6 | 0.75 | 6 of 6 in 0.19 to 0.30 s | 0.73 to 0.88, overshoot to 1.0 |
+| .7 | 0.75 | 3 of 3 in 0.23 to 0.25 s | 0.52 to 0.82 |
+| .9 | 0.75 | 3 of 3 in 0.16 to 0.21 s | 0.69 to 0.77 |
+| .9 | 0.51 | 3 of 3 in 0.24 to 0.27 s | 0.39 to 0.46 |
+| .10 | 0.51 | 3 of 3 in 0.20 to 0.55 s | 0.52 to 0.54, sd 0.02 to 0.04 |
+| .10 | 0.75 | 3 of 3 in 0.22 to 0.43 s | 0.81, 0.81; 4 s hold 0.86, 0.96, 0.87 by second |
+
+- Trace, `.4`: at confirmed motion (0.12 s) the output fell from 320 to
+  129 us and the car sat at 0.35 to 0.49 m/s while the integrator added about
+  42 us/s; the PWM matched the feedforward and gains.
+- Trace, `.10`, 4 s hold at 0.75: PWM 136 us at 1 to 2 s, 122 us at 2 to 3 s,
+  115 us at 3 to 4 s; speed peaked near 1.0 m/s at 2.5 s and fell to 0.80.
+  At 0.51 the PWM settled near 122 us. Reverse needs less PWM to hold a speed
+  once moving fast than from a fresh start, and takes 2 to 3 s to settle.
+- Reverse starts read 16.38 A (the INA226 range) for about 40 ms.
+- The first speed sample of a reverse start often read forward (+0.5 m/s).
+
+### Conclusion
+Supported for starts: no reverse lock from `.4` on (about 30 tries); start
+times 0.16 to 0.55 s, most 0.20 to 0.27 s. Supported at 0.51 m/s (within
+0.03). At 0.75 m/s the hold overshoots by up to 0.2 m/s and settles slowly;
+no single feedforward line fits reverse, whose PWM for a speed depends on the
+speed history. Reverse accepted for 0.9.1 at a start time of 0.3 s or less and
+a hold within 0.15 m/s after 2 s.
+
+---
+
 ## TL-025 - 2026-11-02
 
 ### Setup
