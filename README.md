@@ -187,12 +187,20 @@ the error exceeds `err_threshold`; in reverse the boost applies only near a
 standstill. The output stays on the setpoint's side of neutral, because a
 forward pulse while reversing makes this ESC brake. The integrator only
 accumulates when the output is off its limit or the error pushes back toward
-the usable range. `stiction_kick_rev_us` adds reverse PWM while the wheels are
-still (0 in the shipped tuning). `speed_pwm_min` and `speed_pwm_max` (1000 and
+the usable range.
+
+From a standstill a twitch of a few hall edges reads as real speed, so motion
+counts as confirmed only after `start_confirm_intervals` (5) hall intervals
+spanning `start_confirm_us` (100 ms) in the target direction
+(`src/start_assist.h`). Until then a per-direction start assist holds the
+output at least on a ramp: reverse from 160 to 240 us off neutral at
+1000 us/s, the integrator frozen. With no confirmed motion after 0.6 s the
+output rests at neutral for 0.3 s and the ramp starts over. The reverse boost
+ends at confirmed motion. Forward has no assist in the shipped tuning.
+`speed_pwm_min` and `speed_pwm_max` (1000 and
 2000 us) equal the ESC throttle calibration endpoints (see
-[ESC calibration](#esc-calibration)). On the floor the loop holds 0.5,
-0.75 and 1.0 m/s within 0.04 m/s forward; reverse runs 0.08 to 0.09 m/s fast
-after 3 s and is still converging (`docs/test-log.md`, TL-022).
+[ESC calibration](#esc-calibration)). The feedforward is fitted open loop on
+that calibration (`docs/test-log.md`, TL-025).
 
 Polarity is corrected on the Pi side (`pit.yaml` `speed_sign` /
 `steering_sign`), not here.

@@ -4,6 +4,64 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-025 - 2026-11-02
+
+### Setup
+Same car, floor and lanes as TL-024, after an ESC factory reset (items
+3,4,3,5,3,2,1,2,1,9,1,1 re-entered and read back) and a throttle calibration
+at 1500 / 2000 / 1000 us (`teensy41_esc_cal`, `scripts/esc_cal.py`). Raw-PWM
+build at `24c1dd6` (bounds 1000/2000). Before the sweep, a gamepad drive on
+the normal build with the 0.9.0 feedforward (55/14, 28/8).
+
+### Hypothesis
+The fleet calibration moves the reverse PWM-to-speed line far enough that the
+0.9.0 reverse feedforward no longer starts the car, and a refit from the
+TL-024 method restores both directions.
+
+### Method
+TL-024 method. Running-point launches: 100 us forward; 210, 230 and 260 us
+reverse, until speed holds 0.5 m/s for 0.1 s. Starts on the gamepad drive
+counted at 0.3 s of continuous motion at 0.05 m/s or more.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Breakaway step, hold, rest | 5, 1.0, 1.0 | us, s, s |
+| Running hold | 3.0 | s |
+| Launch handover | 0.5 for 0.1 | m/s for s |
+
+### Observations
+| Direction | Offset | Result |
+| --------- | ------ | ------ |
+| Forward | 50 to 75 us | no start, 2.2 to 3.0 A |
+| Forward | 80, 85 us | twitch; 85 us starts 2 of 3 |
+| Forward | 90 us | starts 3 of 3 in 0.07 to 0.17 s, 4.3 A |
+| Forward | 80 us | 0.81 m/s, rising 0.06 m/s per s |
+| Forward | 85 us | 1.12 m/s, rising 0.12 m/s per s |
+| Reverse | 90 to 120 us | no start, 2.5 to 3.0 A |
+| Reverse | 125 to 200 us | twitch then lock at every step, 3.2 to 8.4 A |
+| Reverse | 205 us | starts 3 of 3 in 0.09 to 0.13 s, about 8 A |
+| Reverse launch | 210, 230, 260 us | 210: 0 of 1 (lock 9.5 A); 230: 1 of 2 (lock 11.5 A); 260: 1 of 1 |
+| Reverse | 100 us | decays from 0.8 to 0.36 m/s, then locks at about 7 A |
+| Reverse | 115 us | 0.84 m/s, sd 0.04, settled |
+| Reverse | 130 us | 1.10 m/s, sd 0.04, settled |
+
+Gamepad drive on the 0.9.0 feedforward: forward 8 starts in 0.13 to 0.45 s;
+reverse 6 of 7 starts after 1.4 to 2.4 s at 4 to 12.5 A, one none in 2 s;
+6 to 82 speed samples of 0.05 m/s or more per reverse pull before motion.
+The first reverse tick at full stick is about 96 us and the integrator adds
+about 60 us per s, reaching 205 us after about 1.8 s.
+
+### Conclusion
+Supported. Breakaway moved from 75 to 90 us forward and from 75 to 205 us
+reverse; at item 6 = 50% both are about 18 to 20% effective throttle. Fits:
+forward 69 us + 12.5 us per m/s, reverse 66 us + 58 us per m/s (two points
+each). Start margin: forward about +15 us; reverse about -80 us, so reverse
+needs a start assist beyond the feedforward. Reverse starts at a fixed step
+lock at random up to 230 us; reverse does not run steadily at 100 us.
+
+---
+
 ## TL-024 - 2026-11-02
 
 ### Setup

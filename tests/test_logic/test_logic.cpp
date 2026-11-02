@@ -6,6 +6,7 @@
 #include "crc16.h"
 #include "drive_map.h"
 #include "esc_cal.h"
+#include "start_assist.h"
 
 static const uint16_t STEER_LO = cfg::SERVO_D135F::angle_pwm_min;
 static const uint16_t STEER_NEU = cfg::SERVO_D135F::angle_pwm_neutral;
@@ -290,6 +291,72 @@ static void test_esc_cal_led_bar(void)
     TEST_ASSERT_EQUAL_INT(42, escCalLedHalf(2200, 1000, 2000, 42));
 }
 
+// --------------------------- startAssist --------------------------- //
+
+static const StartAssistParams REV = {160.0f, 240.0f, 1000.0f, 600000, 300000};
+
+// The twitch seen on the car: four edges, 1 cm, read as -0.4 m/s.
+static void test_motion_twitch_is_not_confirmed(void)
+{
+    MotionSinceStop twitch = {3, 0, false};
+    TEST_ASSERT_FALSE(motionConfirmed(twitch, -1, -0.4f, 120000, 5, 100000));
+}
+
+static void test_motion_needs_intervals_time_and_direction(void)
+{
+    MotionSinceStop m = {5, 0, false};
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, -0.6f, 99999, 5, 100000));
+    TEST_ASSERT_TRUE(motionConfirmed(m, -1, -0.6f, 100000, 5, 100000));
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, 0.6f, 100000, 5, 100000));
+    TEST_ASSERT_FALSE(motionConfirmed(m, 0, -0.6f, 100000, 5, 100000));
+    m.stopped = true;
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, -0.6f, 100000, 5, 100000));
+}
+
+static void test_assist_ramps_then_holds(void)
+{
+    StartAssist s;
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 1000, REV).offset_us);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, 41000, REV).offset_us);
+    TEST_ASSERT_EQUAL_FLOAT(240.0f, startAssistTick(s, -1, false, 300000, REV).offset_us);
+}
+
+static void test_assist_ends_on_confirmed_motion(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, 0, REV);
+    const StartAssistOutput out = startAssistTick(s, -1, true, 50000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, out.offset_us);
+    // A standstill after confirmed motion starts a fresh ramp.
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 900000, REV).offset_us);
+}
+
+static void test_assist_rests_after_timeout_then_retries(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, 0, REV);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, 600000, REV).rest);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, 899999, REV).rest);
+    const StartAssistOutput retry = startAssistTick(s, -1, false, 900000, REV);
+    TEST_ASSERT_FALSE(retry.rest);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, retry.offset_us);
+}
+
+static void test_assist_off_and_direction_change(void)
+{
+    StartAssist s;
+    const StartAssistParams off = {0.0f, 0.0f, 0.0f, 0, 0};
+    const StartAssistOutput none = startAssistTick(s, 1, false, 0, off);
+    TEST_ASSERT_FALSE(none.rest);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, none.offset_us);
+    startAssistTick(s, -1, false, 1000, REV);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, 41000, REV).offset_us);
+    // Neutral, then reverse again: the ramp starts from the bottom.
+    startAssistTick(s, 0, false, 42000, REV);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, 43000, REV).offset_us);
+}
+
 // ----------------------- throttleToTargetMps ---------------------- //
 
 // The property slow mode rests on: full stick lands on the cap exactly, in
@@ -457,6 +524,12 @@ int main(int, char **)
     RUN_TEST(test_rc_switch_positions);
     RUN_TEST(test_rc_switch_down_positions);
     RUN_TEST(test_rc_switch_absent_channel_reads_neither);
+    RUN_TEST(test_motion_twitch_is_not_confirmed);
+    RUN_TEST(test_motion_needs_intervals_time_and_direction);
+    RUN_TEST(test_assist_ramps_then_holds);
+    RUN_TEST(test_assist_ends_on_confirmed_motion);
+    RUN_TEST(test_assist_rests_after_timeout_then_retries);
+    RUN_TEST(test_assist_off_and_direction_change);
     RUN_TEST(test_esc_cal_runs_the_esc_sequence);
     RUN_TEST(test_esc_cal_rejects_out_of_order_steps);
     RUN_TEST(test_esc_cal_quiet_link_returns_to_neutral);
