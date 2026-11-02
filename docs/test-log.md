@@ -4,6 +4,198 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-026 - 2026-11-02
+
+### Setup
+Same car and floor as TL-025, normal and trace builds (`teensy41_trace`) of
+`v0.9.1.2-pcb` to `v0.9.1.10-pcb`. Pi publishes `/drive` while RB is held,
+one normalized command per run from standstill. Battery 7.4 to 7.9 V, then a
+charged battery at 8.3 V from the `ki_rev` 150 rerun on.
+
+### Hypothesis
+With motion confirmed only after sustained hall intervals and a reverse start
+assist, the closed loop starts reverse every time and holds 0.51 and 0.75 m/s
+within 0.10 m/s.
+
+### Method
+Closed-loop starts at commands 0.02 (0.51 m/s) and 0.505 (0.75 m/s), held
+2 s (one run 3 s, one 4 s). Start time is the first sample of 0.3 s of
+continuous motion at 0.05 m/s or more; hold speed is the mean of the last 1 s.
+The trace build logs target, measured speed and ESC PWM every 25 ms.
+
+### Parameters
+| Build | Reverse feedforward | Reverse start ramp | Handover | `ki_rev` | Reverse boost |
+| ----- | ------------------- | ------------------ | -------- | -------- | ------------- |
+| .2 | 66 + 58/m/s | 160 to 240 us at 1000 us/s | at 5 intervals over 100 ms | 60 | off once moving |
+| .3 | 88 + 38/m/s | same | over 50 ms | 60 | off |
+| .4 | 88 + 38/m/s | 160 to 320 us at 2000 us/s | same | 60 | off |
+| .5 | 93 + 38/m/s | same | same | 60 | off |
+| .6 | same | same | same | 150 | off |
+| .7 | same | same | until 0.5 m/s or 80% of target | 100 | off |
+| .9 | same | same | same | 60 | on |
+| .10 | 94 + 55/m/s | same | same | 60 | on |
+
+### Observations
+| Build | Target | Starts (0.3 s motion) | Hold speed, last 1 s |
+| ----- | ------ | --------------------- | -------------------- |
+| .2 | 0.51 | 3 of 3 after 0.07 to 0.75 s, several locked tries first | 0.37 to 0.62 |
+| .3 | 0.51 | 0 of 9 tries; each locked at 12 A for 0.6 s | - |
+| .4 | 0.51 | 6 of 6 in 0.23 to 1.16 s, starts at 16.38 A | 0.35 to 0.40 |
+| .5 | 0.51 | 6 of 6 in 0.22 to 0.35 s | 0.35 to 0.48; 3 s hold 0.44 |
+| .5 | 0.75 | 3 of 3 in 0.21 to 0.25 s | 0.62, 0.68 |
+| .6 | 0.75 | 6 of 6 in 0.19 to 0.30 s | 0.73 to 0.88, overshoot to 1.0 |
+| .7 | 0.75 | 3 of 3 in 0.23 to 0.25 s | 0.52 to 0.82 |
+| .9 | 0.75 | 3 of 3 in 0.16 to 0.21 s | 0.69 to 0.77 |
+| .9 | 0.51 | 3 of 3 in 0.24 to 0.27 s | 0.39 to 0.46 |
+| .10 | 0.51 | 3 of 3 in 0.20 to 0.55 s | 0.52 to 0.54, sd 0.02 to 0.04 |
+| .10 | 0.75 | 3 of 3 in 0.22 to 0.43 s | 0.81, 0.81; 4 s hold 0.86, 0.96, 0.87 by second |
+
+- Trace, `.4`: at confirmed motion (0.12 s) the output fell from 320 to
+  129 us and the car sat at 0.35 to 0.49 m/s while the integrator added about
+  42 us/s; the PWM matched the feedforward and gains.
+- Trace, `.10`, 4 s hold at 0.75: PWM 136 us at 1 to 2 s, 122 us at 2 to 3 s,
+  115 us at 3 to 4 s; speed peaked near 1.0 m/s at 2.5 s and fell to 0.80.
+  At 0.51 the PWM settled near 122 us. Reverse needs less PWM to hold a speed
+  once moving fast than from a fresh start, and takes 2 to 3 s to settle.
+- Reverse starts read 16.38 A (the INA226 range) for about 40 ms.
+- The first speed sample of a reverse start often read forward (+0.5 m/s).
+
+### Conclusion
+Supported for starts: no reverse lock from `.4` on (about 30 tries); start
+times 0.16 to 0.55 s, most 0.20 to 0.27 s. Supported at 0.51 m/s (within
+0.03). At 0.75 m/s the hold overshoots by up to 0.2 m/s and settles slowly;
+no single feedforward line fits reverse, whose PWM for a speed depends on the
+speed history. Reverse accepted for 0.9.1 at a start time of 0.3 s or less and
+a hold within 0.15 m/s after 2 s.
+
+---
+
+## TL-025 - 2026-11-02
+
+### Setup
+Same car, floor and lanes as TL-024, after an ESC factory reset (items
+3,4,3,5,3,2,1,2,1,9,1,1 re-entered and read back) and a throttle calibration
+at 1500 / 2000 / 1000 us (`teensy41_esc_cal`, `scripts/esc_cal.py`). Raw-PWM
+build at `24c1dd6` (bounds 1000/2000). Before the sweep, a gamepad drive on
+the normal build with the 0.9.0 feedforward (55/14, 28/8).
+
+### Hypothesis
+The fleet calibration moves the reverse PWM-to-speed line far enough that the
+0.9.0 reverse feedforward no longer starts the car, and a refit from the
+TL-024 method restores both directions.
+
+### Method
+TL-024 method. Running-point launches: 100 us forward; 210, 230 and 260 us
+reverse, until speed holds 0.5 m/s for 0.1 s. Starts on the gamepad drive
+counted at 0.3 s of continuous motion at 0.05 m/s or more.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Breakaway step, hold, rest | 5, 1.0, 1.0 | us, s, s |
+| Running hold | 3.0 | s |
+| Launch handover | 0.5 for 0.1 | m/s for s |
+
+### Observations
+| Direction | Offset | Result |
+| --------- | ------ | ------ |
+| Forward | 50 to 75 us | no start, 2.2 to 3.0 A |
+| Forward | 80, 85 us | twitch; 85 us starts 2 of 3 |
+| Forward | 90 us | starts 3 of 3 in 0.07 to 0.17 s, 4.3 A |
+| Forward | 80 us | 0.81 m/s, rising 0.06 m/s per s |
+| Forward | 85 us | 1.12 m/s, rising 0.12 m/s per s |
+| Reverse | 90 to 120 us | no start, 2.5 to 3.0 A |
+| Reverse | 125 to 200 us | twitch then lock at every step, 3.2 to 8.4 A |
+| Reverse | 205 us | starts 3 of 3 in 0.09 to 0.13 s, about 8 A |
+| Reverse launch | 210, 230, 260 us | 210: 0 of 1 (lock 9.5 A); 230: 1 of 2 (lock 11.5 A); 260: 1 of 1 |
+| Reverse | 100 us | decays from 0.8 to 0.36 m/s, then locks at about 7 A |
+| Reverse | 115 us | 0.84 m/s, sd 0.04, settled |
+| Reverse | 130 us | 1.10 m/s, sd 0.04, settled |
+
+Gamepad drive on the 0.9.0 feedforward: forward 8 starts in 0.13 to 0.45 s;
+reverse 6 of 7 starts after 1.4 to 2.4 s at 4 to 12.5 A, one none in 2 s;
+6 to 82 speed samples of 0.05 m/s or more per reverse pull before motion.
+The first reverse tick at full stick is about 96 us and the integrator adds
+about 60 us per s, reaching 205 us after about 1.8 s.
+
+### Conclusion
+Supported. Breakaway moved from 75 to 90 us forward and from 75 to 205 us
+reverse; at item 6 = 50% both are about 18 to 20% effective throttle. Fits:
+forward 69 us + 12.5 us per m/s, reverse 66 us + 58 us per m/s (two points
+each). Start margin: forward about +15 us; reverse about -80 us, so reverse
+needs a start assist beyond the feedforward. Reverse starts at a fixed step
+lock at random up to 230 us; reverse does not run steadily at 100 us.
+
+---
+
+## TL-024 - 2026-11-02
+
+### Setup
+Car on a laminate floor: a lane about 3 m long for breakaway, a longer lane
+for running points, both about 0.7 m wide with lidar stops at the end
+(0.3 m plus 0.6 m per m/s) and the sides (0.30 m from the lidar). ESC as
+found: items 3,4,3,5,3,2,1,2,1,9,1,1, throttle calibration unrecorded.
+Raw-PWM build (`teensy41_raw_pwm`, `fw.speed_control=raw_pwm`): a Pi command
+n drives the ESC at 1500 + 1000 * n us, open loop. Battery 7.79 V at rest.
+Pi publishes `/drive` while RB is held; steering holds the gyro heading
+(at most 0.15) with the gyro bias learned at rest.
+
+### Hypothesis
+The open-loop PWM-to-speed line matches the v0.9.0 feedforward fitted in
+TL-022 (forward 55 us + 14 us per m/s, reverse 28 us + 8 us per m/s).
+
+### Method
+- Breakaway: from standstill, offsets in 5 us steps, 1 s each, 1 s neutral
+  between. A step counts when speed stays at 0.05 m/s or more for 0.3 s; the
+  output then goes to neutral. Breakaway is the first step to count 3 times
+  in a row.
+- Running points: launch at 80 us until speed holds 0.5 m/s (0.9 m/s for one
+  run) for 0.1 s, then hold one offset. Steady speed is the mean of the last
+  1 s; a run whose speed drifts more than 0.05 m/s per s there is not settled.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| Breakaway step, hold, rest | 5, 1.0, 1.0 | us, s, s |
+| Sustained motion | 0.3 at 0.05 | s at m/s |
+| Running hold | 2.5 to 5.0 | s |
+| Raw-PWM offset limit | 300 | us |
+| Current stop | 16 A for 0.5 s | - |
+
+### Observations
+| Direction | Offset | Result |
+| --------- | ------ | ------ |
+| Forward | 40 to 70 us | no start; 2.4 to 3.7 A (idle 2.2 A); 65 and 70 us twitch only |
+| Forward | 75 us | starts 3 of 3 in 0.07 to 0.19 s, 63 to 75% moving, 4.2 A |
+| Forward | 58, 62 us | launched car coasts to a stop within 0.3 s |
+| Forward | 66 us | 0.67 m/s, sd 0.03, settled for 4 s |
+| Forward | 70 us | 1.03 m/s, sd 0.05, over 0.75 s (side stop) |
+| Reverse | 20 to 30 us | no start, 2.3 to 2.6 A |
+| Reverse | 35 to 65 us | twitch then lock: 0.12 s of motion (1 cm), current 3.0 to 9.9 A rising with the offset |
+| Reverse | 65 to 75 us | starts or locks per try: 65 us 1 of 3, 70 us 2 of 3 (one lock at 11.8 A), 75 us 3 of 3 (one cut by the end stop while moving); 8.7 to 12.5 A |
+| Reverse | 40 us | 1.05 m/s, sd 0.05, settled for 2.4 s |
+| Reverse | 35 us | 0.62 m/s and still slowing 0.08 m/s per s |
+
+- Each twitch read -0.36 to -0.45 m/s in the speed estimate while the car
+  moved about 1 cm: the median of the first few hall intervals.
+- Reverse starts lunge: 0.35 to 0.8 m per burst by the encoder (the operator
+  saw 1 to 2 m), peaks 1.1 to 2.2 m/s, about 0.7 s of coasting after neutral.
+  Launches at 80 us peaked at 14.3 to 14.5 A.
+- Open loop below 70 us forward settles within about 0.3 s from a 0.5 m/s
+  launch; at 70 us it is still rising after 2.6 s from 0.5 m/s.
+- At rest the fused gyro drifted -0.77 deg/s; a 90 deg hand turn read
+  +88 deg.
+
+### Conclusion
+Supported within about 4 us. Forward: 66 us gives 0.67 m/s against 64.4 us
+from the v0.9.0 line; 70 us gives 1.03 m/s against 69.4 us. Reverse: 40 us
+gives 1.05 m/s against 36.4 us; the slope from 35 and 40 us is about
+11 us per m/s against 8. Starting needs about 75 us both ways, above the
+running offsets (forward 64 to 70 us, reverse 35 to 40 us for 0.6 to
+1.05 m/s), and reverse below 70 us locks at up to 12 A instead of turning.
+
+---
+
 ## TL-023 - 2026-10-26
 
 ### Setup

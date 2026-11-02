@@ -157,7 +157,13 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.integer("fw.profile", 0);
 #endif
   w.integer("fw.protocol", wire::protocol_version);
+#if defined(RCN_ESC_CAL)
+  w.text("fw.speed_control", "esc_cal");
+#elif defined(RCN_RAW_PWM)
+  w.text("fw.speed_control", "raw_pwm");
+#else
   w.text("fw.speed_control", "closed_loop");
+#endif
 
   w.integer("link.baud", (int32_t)UART::baud_rate);
   w.integer("link.telemetry_hz", UART::tx_freq);
@@ -181,6 +187,7 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
 
   w.fixed("pid.kp", PID_CTRL::kp, 3);
   w.fixed("pid.ki", PID_CTRL::ki, 3);
+  w.fixed("pid.ki_rev", PID_CTRL::ki_rev, 3);
   w.fixed("pid.kd", PID_CTRL::kd, 3);
   w.fixed("pid.max_integral", PID_CTRL::max_integral, 3);
   w.fixed("pid.kp_boost", PID_CTRL::kp_boost, 3);
@@ -189,8 +196,17 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("pid.ff_rev_us", PID_CTRL::deadband_rev_us, 1);
   w.fixed("pid.kv_ff_fwd", PID_CTRL::kv_ff_fwd, 3);
   w.fixed("pid.kv_ff_rev", PID_CTRL::kv_ff_rev, 3);
-  w.fixed("pid.stiction_kick_rev_us", PID_CTRL::stiction_kick_rev_us, 1);
-  w.fixed("pid.stiction_speed_mps", PID_CTRL::stiction_speed_mps, 3);
+  w.integer("pid.start_confirm_intervals", PID_CTRL::start_confirm_intervals);
+  w.integer("pid.start_confirm_ms", (int32_t)(PID_CTRL::start_confirm_us / 1000));
+  w.fixed("pid.start_fwd_from_us", PID_CTRL::start_assist_fwd.from_us, 1);
+  w.fixed("pid.start_fwd_max_us", PID_CTRL::start_assist_fwd.max_us, 1);
+  w.fixed("pid.start_rev_from_us", PID_CTRL::start_assist_rev.from_us, 1);
+  w.fixed("pid.start_rev_max_us", PID_CTRL::start_assist_rev.max_us, 1);
+  w.fixed("pid.start_rev_ramp_us_per_s", PID_CTRL::start_assist_rev.ramp_us_per_s, 1);
+  w.integer("pid.start_rev_timeout_ms", (int32_t)(PID_CTRL::start_assist_rev.timeout_us / 1000));
+  w.integer("pid.start_rev_rest_ms", (int32_t)(PID_CTRL::start_assist_rev.rest_us / 1000));
+  w.fixed("pid.start_rev_handover_mps", PID_CTRL::start_assist_rev.handover_mps, 3);
+  w.fixed("pid.start_rev_handover_frac", PID_CTRL::start_assist_rev.handover_frac, 3);
 
   constexpr float gear_ratio = CAR_SPECS::ratio_motor_to_transaxle * CAR_SPECS::ratio_transaxle_to_diff;
   constexpr uint16_t edges_per_rev = ES2845S_4900KV_MOTOR::pole_pairs * ES2845S_4900KV_MOTOR::hall_states_per_erev;

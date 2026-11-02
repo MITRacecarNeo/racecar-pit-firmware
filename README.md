@@ -24,6 +24,7 @@ format in `src/packets.h` and the version numbers that select a matching pair; s
 - [RC receiver](#rc-receiver)
 - [Idle displays](#idle-displays)
 - [Build and flash](#build-and-flash)
+- [ESC calibration](#esc-calibration)
 - [Tests](#tests)
 - [Architecture](#architecture)
 - [Changelog](#changelog)
@@ -55,6 +56,7 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
+| 0.9.x | 0.9.1 | sizes unchanged; needs the ESC calibration |
 | 0.9.x | 0.9.0 | sizes unchanged; adds the info reply |
 | 0.7.4 - 0.9.0 | 0.7.1 | unchanged |
 | 0.6.0 | none tagged; run 0.5.0 | unchanged |
@@ -144,8 +146,8 @@ settings.
 
 The Pi sets bit `0x20` of `SystemState`. While it is set, the Teensy sends one
 info chunk after each telemetry frame, so telemetry keeps its rate. The
-payload is ASCII `key=value` lines (about 1.5 kB in 12 chunks, 60 ms per
-cycle). Keys and the reassembly rules are in
+payload is ASCII `key=value` lines (about 2.0 kB in 16 chunks, 80 ms per
+cycle; limit 3072 B). Keys and the reassembly rules are in
 [docs/protocol.md](docs/protocol.md#info-reply).
 
 On the bench, with the teleop service stopped:
@@ -182,15 +184,24 @@ Actuation follows an RC-priority, Pi-fallback model with no arm switch:
 The ESC has a deadband either side of neutral. A feedforward term per
 direction (`deadband_fwd_us` plus `kv_ff_fwd` per m/s, `deadband_rev_us` plus
 `kv_ff_rev`) carries the output across it, and `kp_boost` adds authority once
-the error exceeds `err_threshold`; in reverse the boost applies only near a
-standstill. The output stays on the setpoint's side of neutral, because a
+the error exceeds `err_threshold`, in both directions. The output stays on the setpoint's side of neutral, because a
 forward pulse while reversing makes this ESC brake. The integrator only
 accumulates when the output is off its limit or the error pushes back toward
-the usable range. `stiction_kick_rev_us` adds reverse PWM while the wheels are
-still (0 in the shipped tuning). `speed_pwm_min` sits deeper than a symmetric
-forward throw to clear the reverse deadband. On the floor the loop holds 0.5,
-0.75 and 1.0 m/s within 0.04 m/s forward; reverse runs 0.08 to 0.09 m/s fast
-after 3 s and is still converging (`docs/test-log.md`, TL-022).
+the usable range.
+
+From a standstill a twitch of a few hall edges reads as real speed, so motion
+counts as confirmed only after `start_confirm_intervals` (5) hall intervals
+spanning `start_confirm_us` (50 ms) in the target direction
+(`src/start_assist.h`). Until then a per-direction start assist holds the
+output at least on a ramp: reverse from 160 to 320 us off neutral at
+2000 us/s, the integrator frozen, and keeps it after confirmed motion until
+the speed reaches 0.5 m/s or 80% of the target, whichever is lower. With no
+confirmed motion after 0.6 s the output rests at neutral for 0.3 s and the
+ramp starts over. `kp_boost` applies on a large error in both directions. Forward has no assist in the shipped tuning.
+`speed_pwm_min` and `speed_pwm_max` (1000 and
+2000 us) equal the ESC throttle calibration endpoints (see
+[ESC calibration](#esc-calibration)). The feedforward is fitted open loop on
+that calibration (`docs/test-log.md`, TL-025).
 
 Polarity is corrected on the Pi side (`pit.yaml` `speed_sign` /
 `steering_sign`), not here.
@@ -324,24 +335,55 @@ board the first write after a soft reboot fails, so the script retries and
 prints the attempt that succeeded. Linux needs PJRC's `00-teensy.rules` in
 `/etc/udev/rules.d/` (a copy ships in PlatformIO's `tool-teensy` package). The platform and every library are pinned in
 `platformio.ini`, so one commit always builds the same firmware. The build
-embeds the short commit and a dirty flag (`scripts/build_flags.py`); the info
-reply reports both.
+embeds the short commit, a dirty flag and the latest commit label in a
+generated header (`.pio/build_info/build_info.h`, from
+`scripts/build_flags.py`) read only by `src/version.h`; the info reply reports
+them. A new commit recompiles the files that include it, not the Teensy core
+and libraries.
 
 `/dev/ttyACM0` is the USB debug and flash port only. The drive link is the GPIO
 UART (Teensy `Serial1` to the Pi's `/dev/neo-pit-pcb`, a udev symlink to
 `ttyAMA0` on Pi 5 / Ubuntu). The Pi needs `enable_uart=1` and a reboot to
 activate GPIO14/15.
 
-The Teleplot-style speed-loop trace is a build option:
+The Teleplot-style speed-loop trace is its own build, `teensy41_trace`:
 
 ```sh
-PLATFORMIO_BUILD_FLAGS="-DRCN_SERIAL_PLOT" pio run -t upload
+pio run -e teensy41_trace -t upload
 ```
 
 It prints the latest target speed, measured speed and ESC PWM on the USB
 serial port from `loop()` every 25 ms, so it samples the 1 kHz loop rather
 than following every tick. Lines are skipped while nothing reads the port.
 Flash the plain build afterward.
+
+Two test builds replace the drive behavior; never ship either:
+
+| Environment | `fw.speed_control` | Behavior |
+| ----------- | ------------------ | -------- |
+| `teensy41_esc_cal` | `esc_cal` | ESC held at one calibration step, chosen by `scripts/esc_cal.py`; no driving |
+| `teensy41_raw_pwm` | `raw_pwm` | Pi command n drives the ESC open loop at 1500 + 1000 * n us (limit +/- 300 us); RC unchanged |
+
+## ESC calibration
+
+The ESC stores its own throttle range. Every car is calibrated to the
+firmware's PWM bounds: 1500 us neutral, 2000 us full forward, 1000 us full
+reverse. A car calibrated to other endpoints responds differently to the same
+PWM, and the speed-loop feedforward no longer fits it.
+
+1. Flash the calibration build: `pio run -e teensy41_esc_cal -t upload`.
+2. Run `python3 scripts/esc_cal.py` on the Pi with the Teensy USB cable
+   plugged in, and follow its prompts. The car is on a stand with the wheels
+   off the ground, and the ESC enters calibration mode from its SET button.
+3. The LED strip shows the held step as a purple bar from both ends: one LED
+   per end at full reverse, half the strip at neutral, the whole strip at full
+   forward.
+4. Flash the normal firmware: `pio run -e teensy41 -t upload`.
+
+The build accepts full forward only from neutral and full reverse only from
+full forward. A held step returns to neutral when USB serial has been quiet
+for 2 s (`cfg::ESC_CAL::link_timeout_ms`); the script polls every 0.5 s. The
+script sends no throttle until the operator confirms the ESC LED is flashing.
 
 ## Tests
 
@@ -398,6 +440,22 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [0.9.1] - 2026-11-02
+Pairs with driver v0.9.x; telemetry and command sizes unchanged. Every car
+needs the ESC calibration (see [ESC calibration](#esc-calibration)).
+- Added: ESC calibration build `teensy41_esc_cal` and `scripts/esc_cal.py`
+  (purple LED bar for the held step); raw-PWM sweep build `teensy41_raw_pwm`;
+  speed-loop trace build `teensy41_trace`.
+- Added: start assist. Motion counts after sustained hall intervals, so a
+  twitch no longer reads as moving; reverse ramps 160 to 320 us until
+  0.5 m/s or 80% of the target, with a timed rest and retry.
+- Changed: ESC PWM bounds 1000/2000 us (were 800/2200); RC fast mode
+  1375/1625 us. Feedforward refit: forward 69 + 12.5/m/s, reverse
+  94 + 55/m/s. `kp_boost` in both directions; `ki_rev`.
+- Changed: build stamp in a generated header, so a new commit rebuilds one
+  file.
+- Removed: `stiction_kick_rev_us`, `stiction_speed_mps`.
 
 ### [0.9.0] - 2026-10-26
 Pairs with driver v0.9.x; telemetry and command sizes unchanged.

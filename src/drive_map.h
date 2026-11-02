@@ -47,6 +47,12 @@ bool rcSwitchDown(uint16_t pulse, uint16_t lo, uint16_t hi, uint16_t threshold);
 // is what keeps stick resolution usable in slow mode.
 float throttleToTargetMps(float motor, float deadband, float min_mps, float max_mps);
 
+// Raw-PWM test build (RCN_RAW_PWM): the normalized command as a direct PWM
+// offset, us_per_unit us per 1.0 of command, limited to +/- max_offset_us and
+// to [pwm_min, pwm_max]. Inside the deadband the output is neutral.
+uint16_t rawCmdToPwm(float motor, float deadband, float us_per_unit, float max_offset_us, uint16_t pwm_min,
+                     uint16_t pwm_neutral, uint16_t pwm_max);
+
 // Integer range map, rounded toward zero; the same arithmetic as Teensyduino's
 // map() for integer inputs.
 int32_t mapRange(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max);

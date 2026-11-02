@@ -17,9 +17,22 @@ def test_latest_label_ignores_malformed_labels(subject):
     assert build_flags.latest_label(subject) == "dev"
 
 
-def test_build_flags_carry_all_three_defines():
-    flags = build_flags.build_flags().split()
-    assert [f.split("=")[0] for f in flags] == ["-DFW_GIT_HASH", "-DFW_GIT_DIRTY", "-DFW_LABEL"]
+def test_build_flags_is_one_stable_include(tmp_path):
+    assert build_flags.build_flags(tmp_path) == f"-I{tmp_path}"
+    header = (tmp_path / "build_info.h").read_text()
+    names = [line.split()[1] for line in header.splitlines() if line.startswith("#define")]
+    assert names == ["FW_GIT_HASH", "FW_GIT_DIRTY", "FW_LABEL"]
+
+
+def test_header_rewritten_only_on_change(tmp_path):
+    path = tmp_path / "build_info.h"
+    text = build_flags.header_text("abc1234", 0, "v0.9.1.8-pcb")
+    assert build_flags.write_if_changed(path, text)
+    mtime = path.stat().st_mtime_ns
+    assert not build_flags.write_if_changed(path, text)
+    assert path.stat().st_mtime_ns == mtime
+    dirty = build_flags.header_text("abc1234", 1, "v0.9.1.8-pcb")
+    assert build_flags.write_if_changed(path, dirty)
 
 
 def test_gap_stats_on_a_steady_stream():

@@ -7,6 +7,7 @@
 #include "config.h"
 #include "drive_map.h"
 #include "profile.h"
+#include "start_assist.h"
 #include "watchdog.h"
 #include "shared.h"
 
@@ -21,6 +22,8 @@ namespace
   volatile uint8_t intervalIdx = 0;
   volatile uint8_t lastState = 0;
   volatile int8_t direction = 0;
+  volatile uint16_t intervalsSinceStop = 0;
+  volatile uint32_t firstEdgeTime = 0;
   HallDirFilter dirFilter; // ISR only
 
   void onHallChange()
@@ -38,6 +41,8 @@ namespace
     {
       dirFilter = HallDirFilter{};
       intervalCount = 0;
+      intervalsSinceStop = 0;
+      firstEdgeTime = now;
     }
     else
     {
@@ -45,6 +50,8 @@ namespace
       intervalIdx = (intervalIdx + 1) % rpm_window;
       if (intervalCount < rpm_window)
         intervalCount++;
+      if (intervalsSinceStop < UINT16_MAX)
+        intervalsSinceStop++;
     }
 
     direction = filterHallDirection(dirFilter, hallDirection(lastState, state), dir_confirm_transitions);
@@ -92,6 +99,16 @@ namespace
   }
 }
 
+static MotionSinceStop readMotionSinceStop()
+{
+  noInterrupts();
+  const uint32_t lastT = lastTransitionTime;
+  MotionSinceStop m = {intervalsSinceStop, firstEdgeTime, false};
+  interrupts();
+  m.stopped = (uint32_t)(micros() - lastT) > cfg::ES2845S_4900KV_MOTOR::stop_timeout_us;
+  return m;
+}
+
 void initHallEncoder()
 {
   using namespace cfg::ES2845S_4900KV_MOTOR;
@@ -109,18 +126,20 @@ namespace
   float speedIntegral = 0.0f;
   float speedLastErr = 0.0f;
   float speedFilteredDeriv = 0.0f;
+  StartAssist startAssist;
 
   void resetSpeedLoop()
   {
     speedIntegral = 0.0f;
     speedLastErr = 0.0f;
+    startAssist = StartAssist{};
   }
 
   // PI plus feedforward on wheel speed. The feedforward term carries the output
   // across the ESC deadband; the gain schedule adds authority on large error.
   // The output stays on the target's side of neutral: a forward pulse while
   // reversing (or the reverse) makes the ESC brake and jerk the drivetrain.
-  uint16_t speedPID(float target_mps, float measured_mps, float dt)
+  uint16_t speedPID(float target_mps, float measured_mps, float dt, const MotionSinceStop &motion, uint32_t now_us)
   {
     using namespace cfg::PID_CTRL;
     using cfg::ESC_10BL60_G2::speed_pwm_max;
@@ -137,14 +156,27 @@ namespace
     else if (target_mps < -cfg::ESC_10BL60_G2::cmd_deadband)
     {
       ff_term = -deadband_rev_us + kv_ff_rev * target_mps;
-      if (measured_mps > -stiction_speed_mps)
-        ff_term -= stiction_kick_rev_us;
     }
 
-    // In reverse the boost only helps the car off a standstill; once moving,
-    // a noisy speed sample times kp_boost swings the output too far.
-    const bool reverse_moving = target_mps < 0.0f && measured_mps <= -stiction_speed_mps;
-    const float active_kp = (fabsf(err) > err_threshold && !reverse_moving) ? kp_boost : kp;
+    const int8_t dir = target_mps > 0.0f ? 1 : (target_mps < 0.0f ? -1 : 0);
+    const bool confirmed =
+        motionConfirmed(motion, dir, measured_mps, now_us, start_confirm_intervals, start_confirm_us);
+    const StartAssistParams &assist_params = dir > 0 ? start_assist_fwd : start_assist_rev;
+    const StartAssistOutput assist = startAssistTick(startAssist, dir, confirmed,
+                                                     handoverSpeedReached(target_mps, measured_mps, assist_params),
+                                                     now_us, assist_params);
+    if (assist.rest)
+    {
+      speedIntegral = 0.0f;
+      speedLastErr = err;
+      return speed_pwm_neutral;
+    }
+
+    // The boost adds acceleration on a large error in both directions. The
+    // side-of-neutral clamp below keeps a noisy sample from swinging the
+    // output into a brake pulse, and the start assist keeps twitch readings
+    // out of the error.
+    const float active_kp = fabsf(err) > err_threshold ? kp_boost : kp;
     const float p_term = active_kp * err;
 
     const float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
@@ -155,14 +187,23 @@ namespace
     // Integrate only off the limits, or when the error pushes back into range.
     const float pwm_lo = target_mps > 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_min;
     const float pwm_hi = target_mps < 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_max;
-    const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    const float active_ki = dir < 0 ? ki_rev : ki;
+    const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
     const bool hit_upper_limit = (predicted_pwm >= pwm_hi) && (err > 0);
     const bool hit_lower_limit = (predicted_pwm <= pwm_lo) && (err < 0);
-    if (!hit_upper_limit && !hit_lower_limit)
+    // Frozen while the start assist holds the output, so the hand-off at
+    // confirmed motion does not carry a wound-up integral.
+    const bool assisting = assist.offset_us > 0.0f;
+    if (!hit_upper_limit && !hit_lower_limit && !assisting)
       speedIntegral += err * dt;
     speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
 
-    const float final_pwm = speed_pwm_neutral + ff_term + p_term + (ki * speedIntegral) + d_term;
+    float final_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
+    if (assisting)
+    {
+      const float assist_pwm = speed_pwm_neutral + dir * assist.offset_us;
+      final_pwm = dir > 0 ? fmaxf(final_pwm, assist_pwm) : fminf(final_pwm, assist_pwm);
+    }
     return (uint16_t)constrain(final_pwm, pwm_lo, pwm_hi);
   }
 
@@ -208,6 +249,8 @@ namespace
   // Last values that read cleanly, used when a write is in progress.
   RcChannels rc_last = {};
   DriveCommand cmd_last = {0.0f, 0.0f};
+
+  volatile uint16_t esc_cal_pwm_us = cfg::ESC_10BL60_G2::speed_pwm_neutral;
 
   // For the serial trace, printed from loop().
   volatile float trace_target_mps = 0.0f;
@@ -305,10 +348,20 @@ namespace
 
     float target_mps = 0.0f;
     uint16_t throt_out;
+#ifdef RCN_RAW_PWM
+    if (closed_loop && !rc_active)
+    {
+      throt_out = rawCmdToPwm(norm_cmd, db, cfg::RAW_PWM_TEST::us_per_unit, cfg::RAW_PWM_TEST::max_offset_us,
+                              cfg::ESC_10BL60_G2::speed_pwm_min, cfg::ESC_10BL60_G2::speed_pwm_neutral,
+                              cfg::ESC_10BL60_G2::speed_pwm_max);
+      resetSpeedLoop();
+    }
+    else
+#endif
     if (closed_loop)
     {
       target_mps = throttleToTargetMps(norm_cmd, db, cfg::PID_CTRL::min_speed_mps, speed_cap);
-      throt_out = speedPID(target_mps, measured_mps, dt);
+      throt_out = speedPID(target_mps, measured_mps, dt, readMotionSinceStop(), now);
     }
     else
     {
@@ -316,6 +369,13 @@ namespace
       resetSpeedLoop();
     }
 
+#ifdef RCN_ESC_CAL
+    // Calibration build: no driving; the ESC sees only the held step.
+    steer_out = cfg::SERVO_D135F::angle_pwm_neutral;
+    throt_out = esc_cal_pwm_us;
+    target_mps = 0.0f;
+    resetSpeedLoop();
+#endif
     steerServo.writeMicroseconds(steer_out);
     throtMot.writeMicroseconds(throt_out);
     PROF_SECTION(drive_body, t_body);
@@ -326,6 +386,16 @@ namespace
     trace_measured_mps = measured_mps;
     trace_pwm = throt_out;
   }
+}
+
+void setEscCalPwm(uint16_t pwm_us)
+{
+  esc_cal_pwm_us = pwm_us;
+}
+
+uint16_t escCalPwmUs()
+{
+  return esc_cal_pwm_us;
 }
 
 void startDriveControl()

@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "packets.h"
+#include "start_assist.h"
 
 // All tunables live here. Nothing in src/ should hardcode a value that belongs
 // in this file. Arduino-free, so host tests read the same values; the Pi reads
@@ -72,9 +73,11 @@ namespace cfg
 
         // PWM safety bounds. The Pi does not scale the range, so the Teensy owns
         // the physical limits.
-        constexpr uint16_t speed_pwm_min = 800;      // us, full-reverse bound; deeper than 1000 to clear the ESC reverse deadband
+        // Equal to the ESC throttle calibration endpoints (env teensy41_esc_cal);
+        // past them the ESC gives no more throttle.
+        constexpr uint16_t speed_pwm_min = 1000;     // us, full-reverse bound
         constexpr uint16_t speed_pwm_neutral = 1500; // us, ESC arm / neutral
-        constexpr uint16_t speed_pwm_max = 2200;     // us, full-forward bound
+        constexpr uint16_t speed_pwm_max = 2000;     // us, full-forward bound
 
         // RC-manual PWM endpoints on the direct (fast-mode) path.
         constexpr uint16_t rc_pwm_max = speed_demon
@@ -272,24 +275,57 @@ namespace cfg
 
         constexpr float kp = 20.0f;
         constexpr float ki = 60.0f;
+        // Reverse sits on a steep part of the ESC curve, where the feedforward
+        // alone lands tenths of a m/s off; the integrator does the tracking.
+        constexpr float ki_rev = 60.0f;
         constexpr float max_integral = 150.0f; // anti-windup limit
         constexpr float kd = 0.0f;
         constexpr float kd_filter_alpha = 0.05f;
 
         // Feedforward and gain scheduling.
-        constexpr float deadband_fwd_us = 55.0f;
-        constexpr float deadband_rev_us = 28.0f;
+        // On the 1000/1500/2000 ESC calibration (docs/test-log.md): forward fitted
+        // open loop; reverse from the PWM the closed loop settles at, since
+        // open-loop reverse points depend on how hard the launch was.
+        constexpr float deadband_fwd_us = 69.0f;
+        constexpr float deadband_rev_us = 94.0f;
 
-        constexpr float kv_ff_fwd = 14.0f;
-        constexpr float kv_ff_rev = 8.0f;
+        constexpr float kv_ff_fwd = 12.5f;
+        constexpr float kv_ff_rev = 55.0f;
 
         constexpr float kp_boost = 60.0f;
         constexpr float err_threshold = 0.25f;
 
-        // Breaks static friction from a standstill; the reverse deadband is too
-        // wide for the PI term alone.
-        constexpr float stiction_kick_rev_us = 0.0f; // 0 disables
-        constexpr float stiction_speed_mps = 0.05f; // below this the wheels count as stopped
+        // Start assist (src/start_assist.h). Motion counts once this many hall
+        // intervals since the standstill span start_confirm_us; a twitch is about
+        // four edges. Until then the output is at least the per-direction ramp.
+        constexpr uint16_t start_confirm_intervals = 5;
+        constexpr uint32_t start_confirm_us = 50000;
+        // {from_us, max_us, ramp_us_per_s, timeout_us, rest_us, handover_mps,
+        // handover_frac}; max_us 0 is off. Reverse holds the ramp until 0.5 m/s
+        // or 80% of the target: handed over at the first edges, the rotor is too
+        // slow for the running feedforward to carry it.
+        constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
+        constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000, 0.5f, 0.8f};
+    }
+
+    // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command
+    // drives the ESC open loop at 1500 + command * us_per_unit us, for
+    // measuring the PWM-to-speed curve. RC driving is unchanged. Never ship it.
+    namespace RAW_PWM_TEST
+    {
+        constexpr float us_per_unit = 1000.0f; // command 0.001 = 1 us
+        constexpr float max_offset_us = 300.0f;
+    }
+
+    // ESC calibration build (-DRCN_ESC_CAL, env teensy41_esc_cal): holds the
+    // ESC at one calibration step at a time, chosen over USB serial by
+    // scripts/esc_cal.py; Pi and RC driving are off. The LED strip shows the
+    // held PWM in purple. Never ship it.
+    namespace ESC_CAL
+    {
+        // A step away from neutral falls back to neutral when USB serial goes
+        // quiet this long (the script polls every 0.5 s).
+        constexpr uint32_t link_timeout_ms = 2000;
     }
 
     // Invariants the actuation math assumes. A bad edit here is a runaway servo

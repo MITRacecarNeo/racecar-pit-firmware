@@ -89,8 +89,9 @@ The Teensy rebuilds the payload at the start of each cycle. `IDNumber`
 changes only when the payload content does (a sensor found after boot), so
 the Pi restarts collection when the revision, chunk count, or `FrameBytes`
 changes, and never joins chunks of two payloads. A lost chunk comes round
-again in the next cycle; a full cycle of the current payload (1514 B, 12
-chunks) takes 60 ms.
+again in the next cycle; a full cycle of the current payload (about 2.0 kB,
+16 chunks) takes about 80 ms. The firmware holds up to 3072 B
+(`info::payload_max_bytes`).
 
 One telemetry frame plus the largest chunk is 240 B, 2.6 ms on the wire,
 inside the 5 ms slot. Firmware without the info reply never answers; the
@@ -126,24 +127,29 @@ values come from `config/config.h` unless noted.
 | `fw.board` | teensy41 | target board |
 | `fw.profile` | 0 | 1 in the profiling build (`teensy41_profile`) |
 | `fw.protocol` | 1 | header `VersionNum` |
-| `fw.speed_control` | closed_loop | Pi throttle is a speed setpoint on the encoder |
+| `fw.speed_control` | closed_loop | Pi throttle is a speed setpoint on the encoder; `esc_cal` and `raw_pwm` in the test builds |
 | `link.baud` | 921600 | UART baud |
 | `link.telemetry_hz` | 200 | telemetry slot rate |
 | `link.cmd_timeout_ms` | 50 | stale command falls to neutral |
 | `link.cmd_crc` | 1 | command CRC enforced |
 | `steer.pwm_min_us`, `steer.pwm_center_us`, `steer.pwm_max_us` | 1025, 1500, 1975 | servo PWM at -1, 0, +1 (-1 = full left) |
-| `esc.pwm_min_us`, `esc.pwm_neutral_us`, `esc.pwm_max_us` | 800, 1500, 2200 | ESC PWM bounds |
-| `esc.rc_pwm_min_us`, `esc.rc_pwm_max_us` | 1325, 1675 | RC fast-mode PWM endpoints |
+| `esc.pwm_min_us`, `esc.pwm_neutral_us`, `esc.pwm_max_us` | 1000, 1500, 2000 | ESC PWM bounds, equal to the ESC calibration endpoints |
+| `esc.rc_pwm_min_us`, `esc.rc_pwm_max_us` | 1375, 1625 | RC fast-mode PWM endpoints |
 | `speed.min_mps` | 0.500 | setpoint just past the deadband |
 | `speed.max_mps` | 1.000 | setpoint at full command |
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |
 | `speed.deadband` | 0.010 | normalized commands inside this are stop |
 | `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 60.000, 0.000 | speed loop gains, us per m/s |
+| `pid.ki_rev` | 60.000 | integral gain while the target is reverse |
 | `pid.max_integral` | 150.000 | integrator clamp |
 | `pid.kp_boost`, `pid.boost_error_mps` | 60.000, 0.250 | gain above this error |
-| `pid.ff_fwd_us`, `pid.ff_rev_us` | 55.0, 28.0 | static feedforward across the ESC deadband |
-| `pid.kv_ff_fwd`, `pid.kv_ff_rev` | 14.000, 8.000 | feedforward per m/s |
-| `pid.stiction_kick_rev_us`, `pid.stiction_speed_mps` | 0.0, 0.050 | reverse start kick below this speed (0 is off) |
+| `pid.ff_fwd_us`, `pid.ff_rev_us` | 69.0, 94.0 | static feedforward across the ESC deadband |
+| `pid.kv_ff_fwd`, `pid.kv_ff_rev` | 12.500, 55.000 | feedforward per m/s |
+| `pid.start_confirm_intervals`, `pid.start_confirm_ms` | 5, 50 | hall intervals and time since standstill that confirm motion |
+| `pid.start_fwd_from_us`, `pid.start_fwd_max_us` | 0.0, 0.0 | forward start assist ramp (0 is off) |
+| `pid.start_rev_from_us`, `pid.start_rev_max_us`, `pid.start_rev_ramp_us_per_s` | 160.0, 320.0, 2000.0 | reverse start assist ramp |
+| `pid.start_rev_timeout_ms`, `pid.start_rev_rest_ms` | 600, 300 | assist time before a neutral rest, rest time |
+| `pid.start_rev_handover_mps`, `pid.start_rev_handover_frac` | 0.500, 0.800 | the assist ends at the lower of this speed and this fraction of the target |
 | `drivetrain.wheel_diameter_m` | 0.0720 | wheel diameter |
 | `drivetrain.gear_ratio` | 0.119628 | wheel rev per motor rev |
 | `encoder.edges_per_motor_rev` | 12 | hall transitions per motor rev |

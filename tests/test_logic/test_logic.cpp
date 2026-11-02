@@ -1,9 +1,12 @@
+#include <string.h>
 #include <unity.h>
 
 #include "battery.h"
 #include "config.h"
 #include "crc16.h"
 #include "drive_map.h"
+#include "esc_cal.h"
+#include "start_assist.h"
 
 static const uint16_t STEER_LO = cfg::SERVO_D135F::angle_pwm_min;
 static const uint16_t STEER_NEU = cfg::SERVO_D135F::angle_pwm_neutral;
@@ -21,7 +24,7 @@ static const float SLOW_MPS = cfg::PID_CTRL::slow_speed_mps;
 
 // The RC map DriveControl uses, fixed to the shipped 0.25 trim so the expected
 // PWM values below stay hand-checkable.
-static const RcThrottleMap RC_MAP = {1000, 1500, 2000, 1475, 1525, 1575, 1325, 1500, 1675};
+static const RcThrottleMap RC_MAP = {1000, 1500, 2000, 1475, 1525, 1575, 1375, 1500, 1625};
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -66,12 +69,11 @@ static void test_map_endpoints_and_center(void)
     TEST_ASSERT_EQUAL_UINT16(STEER_HI, mapNormToPwm(1.0f, STEER_LO, STEER_NEU, STEER_HI));
 }
 
-// The throttle range is asymmetric about neutral, so each half scales against
-// its own span.
+// A range asymmetric about neutral scales each half against its own span.
 static void test_map_asymmetric_halves_scale_independently(void)
 {
-    TEST_ASSERT_EQUAL_UINT16(1850, mapNormToPwm(0.5f, THROT_LO, THROT_NEU, THROT_HI));
-    TEST_ASSERT_EQUAL_UINT16(1150, mapNormToPwm(-0.5f, THROT_LO, THROT_NEU, THROT_HI));
+    TEST_ASSERT_EQUAL_UINT16(1850, mapNormToPwm(0.5f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1300, mapNormToPwm(-0.5f, 1100, 1500, 2200));
 }
 
 static void test_map_clamps_out_of_range_input(void)
@@ -196,6 +198,199 @@ static void test_rc_switch_absent_channel_reads_neither(void)
     TEST_ASSERT_FALSE(rcSwitchDown(2500, RC_LO, RC_HI, SW_THRESH));
 }
 
+// -------------------------- rawCmdToPwm --------------------------- //
+
+static void test_raw_pwm_maps_command_to_offset(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(1562, rawCmdToPwm(0.062f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1335, rawCmdToPwm(-0.165f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+}
+
+static void test_raw_pwm_neutral_inside_deadband(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(1500, rawCmdToPwm(0.0f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1500, rawCmdToPwm(0.01f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1500, rawCmdToPwm(-0.005f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+}
+
+static void test_raw_pwm_limits_offset_and_bounds(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(1800, rawCmdToPwm(1.0f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1200, rawCmdToPwm(-1.0f, 0.01f, 1000.0f, 300.0f, 800, 1500, 2200));
+    TEST_ASSERT_EQUAL_UINT16(1700, rawCmdToPwm(0.25f, 0.01f, 1000.0f, 300.0f, 1300, 1500, 1700));
+    TEST_ASSERT_EQUAL_UINT16(1300, rawCmdToPwm(-0.25f, 0.01f, 1000.0f, 300.0f, 1300, 1500, 1700));
+}
+
+// ----------------------------- escCal ------------------------------ //
+
+static void test_esc_cal_runs_the_esc_sequence(void)
+{
+    EscCal cal;
+    TEST_ASSERT_EQUAL_UINT16(1500, escCalPwm(cal, 1000, 1500, 2000));
+    TEST_ASSERT_TRUE(escCalApply(cal, 'f', 10));
+    TEST_ASSERT_EQUAL_UINT16(2000, escCalPwm(cal, 1000, 1500, 2000));
+    TEST_ASSERT_TRUE(escCalApply(cal, 'r', 20));
+    TEST_ASSERT_EQUAL_UINT16(1000, escCalPwm(cal, 1000, 1500, 2000));
+    TEST_ASSERT_TRUE(escCalApply(cal, 'n', 30));
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Done);
+    TEST_ASSERT_EQUAL_UINT16(1500, escCalPwm(cal, 1000, 1500, 2000));
+}
+
+// A stray character cannot reach full reverse without passing full forward.
+static void test_esc_cal_rejects_out_of_order_steps(void)
+{
+    EscCal cal;
+    TEST_ASSERT_FALSE(escCalApply(cal, 'r', 0));
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Neutral);
+    TEST_ASSERT_FALSE(escCalApply(cal, 'x', 0));
+    TEST_ASSERT_TRUE(escCalApply(cal, 'f', 0));
+    TEST_ASSERT_FALSE(escCalApply(cal, 'f', 0));
+    TEST_ASSERT_TRUE(escCalApply(cal, 'n', 0));
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Neutral);
+    TEST_ASSERT_TRUE(escCalApply(cal, '?', 0));
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Neutral);
+}
+
+static void test_esc_cal_quiet_link_returns_to_neutral(void)
+{
+    EscCal cal;
+    escCalApply(cal, 'f', 1000);
+    escCalTick(cal, 2999, 2000);
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::FullForward);
+    escCalApply(cal, '?', 2999);
+    escCalTick(cal, 4999, 2000);
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::FullForward);
+    escCalTick(cal, 5000, 2000);
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Neutral);
+    TEST_ASSERT_TRUE(cal.aborted);
+    // Neutral is never timed out.
+    escCalTick(cal, 90000, 2000);
+    TEST_ASSERT_TRUE(cal.step == EscCalStep::Neutral);
+    escCalApply(cal, 'f', 90000);
+    TEST_ASSERT_FALSE(cal.aborted);
+}
+
+static void test_esc_cal_status_line(void)
+{
+    EscCal cal;
+    escCalApply(cal, 'f', 0);
+    char buf[64];
+    const size_t n = escCalStatus(cal, 2000, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_STRING("esc_cal step=full_forward pwm=2000 aborted=0\n", buf);
+    TEST_ASSERT_EQUAL_UINT32(strlen(buf), n);
+    char tiny[8];
+    TEST_ASSERT_EQUAL_UINT32(0, escCalStatus(cal, 2000, tiny, sizeof(tiny)));
+}
+
+static void test_esc_cal_led_bar(void)
+{
+    TEST_ASSERT_EQUAL_INT(1, escCalLedHalf(1000, 1000, 2000, 42));
+    TEST_ASSERT_EQUAL_INT(21, escCalLedHalf(1500, 1000, 2000, 42));
+    TEST_ASSERT_EQUAL_INT(42, escCalLedHalf(2000, 1000, 2000, 42));
+    TEST_ASSERT_EQUAL_INT(1, escCalLedHalf(800, 1000, 2000, 42));
+    TEST_ASSERT_EQUAL_INT(42, escCalLedHalf(2200, 1000, 2000, 42));
+}
+
+// --------------------------- startAssist --------------------------- //
+
+static const StartAssistParams REV = {160.0f, 240.0f, 1000.0f, 600000, 300000, 0.5f, 0.8f};
+
+// The twitch seen on the car: four edges, 1 cm, read as -0.4 m/s.
+static void test_motion_twitch_is_not_confirmed(void)
+{
+    MotionSinceStop twitch = {3, 0, false};
+    TEST_ASSERT_FALSE(motionConfirmed(twitch, -1, -0.4f, 120000, 5, 100000));
+}
+
+static void test_motion_needs_intervals_time_and_direction(void)
+{
+    MotionSinceStop m = {5, 0, false};
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, -0.6f, 99999, 5, 100000));
+    TEST_ASSERT_TRUE(motionConfirmed(m, -1, -0.6f, 100000, 5, 100000));
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, 0.6f, 100000, 5, 100000));
+    TEST_ASSERT_FALSE(motionConfirmed(m, 0, -0.6f, 100000, 5, 100000));
+    m.stopped = true;
+    TEST_ASSERT_FALSE(motionConfirmed(m, -1, -0.6f, 100000, 5, 100000));
+}
+
+static void test_assist_ramps_then_holds(void)
+{
+    StartAssist s;
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 1000, REV).offset_us);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, false, 41000, REV).offset_us);
+    TEST_ASSERT_EQUAL_FLOAT(240.0f, startAssistTick(s, -1, false, false, 300000, REV).offset_us);
+}
+
+static void test_assist_ends_on_confirmed_motion(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    const StartAssistOutput out = startAssistTick(s, -1, true, true, 50000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, out.offset_us);
+    // A standstill after confirmed motion starts a fresh ramp.
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 900000, REV).offset_us);
+}
+
+static void test_assist_rests_after_timeout_then_retries(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, false, 600000, REV).rest);
+    TEST_ASSERT_TRUE(startAssistTick(s, -1, false, false, 899999, REV).rest);
+    const StartAssistOutput retry = startAssistTick(s, -1, false, false, 900000, REV);
+    TEST_ASSERT_FALSE(retry.rest);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, retry.offset_us);
+}
+
+// Confirmed motion below the handover speed keeps the ramp; reaching it hands over.
+static void test_assist_holds_until_handover_speed(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    StartAssistOutput out = startAssistTick(s, -1, true, false, 60000, REV);
+    TEST_ASSERT_FALSE(out.confirmed);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 220.0f, out.offset_us);
+    out = startAssistTick(s, -1, true, true, 90000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, out.offset_us);
+    // Handed over, a dip below the handover speed does not restart the ramp.
+    out = startAssistTick(s, -1, true, false, 120000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+}
+
+// Confirmed but slow at the timeout: hand over instead of resting.
+static void test_assist_hands_over_at_timeout_when_moving(void)
+{
+    StartAssist s;
+    startAssistTick(s, -1, false, false, 0, REV);
+    const StartAssistOutput out = startAssistTick(s, -1, true, false, 600000, REV);
+    TEST_ASSERT_TRUE(out.confirmed);
+    TEST_ASSERT_FALSE(out.rest);
+}
+
+static void test_handover_speed_is_the_lower_of_the_two(void)
+{
+    TEST_ASSERT_FALSE(handoverSpeedReached(-1.0f, -0.49f, REV));
+    TEST_ASSERT_TRUE(handoverSpeedReached(-1.0f, -0.5f, REV));
+    TEST_ASSERT_FALSE(handoverSpeedReached(-0.51f, -0.40f, REV));
+    TEST_ASSERT_TRUE(handoverSpeedReached(-0.51f, -0.41f, REV));
+}
+
+static void test_assist_off_and_direction_change(void)
+{
+    StartAssist s;
+    const StartAssistParams off = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
+    const StartAssistOutput none = startAssistTick(s, 1, false, false, 0, off);
+    TEST_ASSERT_FALSE(none.rest);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, none.offset_us);
+    startAssistTick(s, -1, false, false, 1000, REV);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 200.0f, startAssistTick(s, -1, false, false, 41000, REV).offset_us);
+    // Neutral, then reverse again: the ramp starts from the bottom.
+    startAssistTick(s, 0, false, false, 42000, REV);
+    TEST_ASSERT_EQUAL_FLOAT(160.0f, startAssistTick(s, -1, false, false, 43000, REV).offset_us);
+}
+
 // ----------------------- throttleToTargetMps ---------------------- //
 
 // The property slow mode rests on: full stick lands on the cap exactly, in
@@ -268,16 +463,16 @@ static void test_rc_throttle_deadzone_and_floor(void)
     TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1500, RC_MAP));
     TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1525, RC_MAP));
     TEST_ASSERT_EQUAL_UINT16(1500, rcThrottleToPwm(1475, RC_MAP));
-    TEST_ASSERT_EQUAL_UINT16(1580, rcThrottleToPwm(1526, RC_MAP));
-    TEST_ASSERT_EQUAL_UINT16(1467, rcThrottleToPwm(1474, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1578, rcThrottleToPwm(1526, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1470, rcThrottleToPwm(1474, RC_MAP));
 }
 
 static void test_rc_throttle_endpoints_and_clamp(void)
 {
-    TEST_ASSERT_EQUAL_UINT16(1675, rcThrottleToPwm(2000, RC_MAP));
-    TEST_ASSERT_EQUAL_UINT16(1325, rcThrottleToPwm(1000, RC_MAP));
-    TEST_ASSERT_EQUAL_UINT16(1675, rcThrottleToPwm(2100, RC_MAP));
-    TEST_ASSERT_EQUAL_UINT16(1325, rcThrottleToPwm(900, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1625, rcThrottleToPwm(2000, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1375, rcThrottleToPwm(1000, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1625, rcThrottleToPwm(2100, RC_MAP));
+    TEST_ASSERT_EQUAL_UINT16(1375, rcThrottleToPwm(900, RC_MAP));
 }
 
 static void test_rc_throttle_norm(void)
@@ -363,6 +558,23 @@ int main(int, char **)
     RUN_TEST(test_rc_switch_positions);
     RUN_TEST(test_rc_switch_down_positions);
     RUN_TEST(test_rc_switch_absent_channel_reads_neither);
+    RUN_TEST(test_motion_twitch_is_not_confirmed);
+    RUN_TEST(test_motion_needs_intervals_time_and_direction);
+    RUN_TEST(test_assist_ramps_then_holds);
+    RUN_TEST(test_assist_ends_on_confirmed_motion);
+    RUN_TEST(test_assist_rests_after_timeout_then_retries);
+    RUN_TEST(test_assist_off_and_direction_change);
+    RUN_TEST(test_assist_holds_until_handover_speed);
+    RUN_TEST(test_assist_hands_over_at_timeout_when_moving);
+    RUN_TEST(test_handover_speed_is_the_lower_of_the_two);
+    RUN_TEST(test_esc_cal_runs_the_esc_sequence);
+    RUN_TEST(test_esc_cal_rejects_out_of_order_steps);
+    RUN_TEST(test_esc_cal_quiet_link_returns_to_neutral);
+    RUN_TEST(test_esc_cal_status_line);
+    RUN_TEST(test_esc_cal_led_bar);
+    RUN_TEST(test_raw_pwm_maps_command_to_offset);
+    RUN_TEST(test_raw_pwm_neutral_inside_deadband);
+    RUN_TEST(test_raw_pwm_limits_offset_and_bounds);
     RUN_TEST(test_setpoint_full_stick_hits_the_cap_exactly);
     RUN_TEST(test_setpoint_slow_mode_rescales_rather_than_clips);
     RUN_TEST(test_setpoint_just_past_deadband_starts_at_min);

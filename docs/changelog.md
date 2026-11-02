@@ -5,6 +5,56 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-02
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged. Every car needs the ESC calibration below; the speed-loop constants
+are fitted to it.
+
+### Added
+- ESC calibration build `teensy41_esc_cal` (`src/esc_cal.*`, `RCN_ESC_CAL`): holds
+  the ESC at neutral, full forward or full reverse in order, chosen over USB
+  serial; the LED strip shows the held step as a purple bar; a held step
+  returns to neutral after 2 s without serial traffic. `fw.speed_control=esc_cal`.
+- `scripts/esc_cal.py`: steps the calibration build through the ESC's SET
+  button sequence, with a keepalive; no throttle until the operator confirms
+  the ESC is in calibration mode.
+- Raw-PWM test build `teensy41_raw_pwm` (`RCN_RAW_PWM`): Pi command n drives the
+  ESC open loop at 1500 + 1000 * n us, limited to +/- 300 us, for measuring the
+  PWM-to-speed curve. `fw.speed_control=raw_pwm`.
+- Host tests: five `escCal` cases and three `rawCmdToPwm` cases in `test_logic`;
+  `test_esc_cal.py` in the pytest suite (5 cases).
+- Start assist (`src/start_assist.*`): motion counts after 5 hall intervals
+  over 50 ms since standstill in the target direction, so a twitch no longer
+  reads as moving. Until then reverse output ramps from 160 to 320 us off
+  neutral at 2000 us/s with the integrator frozen; no confirmed motion in
+  0.6 s rests at neutral for 0.3 s, then retries. Info keys `pid.start_*`.
+  Six host tests.
+- `docs/test-log.md` TL-024: open-loop breakaway and running points on the
+  0.9.0 ESC setup.
+
+### Changed
+- Build stamp (commit, dirty flag, label) in a generated header read by
+  `src/version.h` instead of global `-D` flags, so a new commit no longer
+  rebuilds the Teensy core and libraries.
+- Speed-loop trace is its own environment, `teensy41_trace`.
+- Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
+  69 us + 12.5 us per m/s (was 55 + 14), reverse 94 us + 55 us per m/s (was
+  28 + 8), from the PWM the closed loop settles at.
+- Separate reverse integral gain `ki_rev` (60, the same as forward `ki`).
+- `kp_boost` applies in reverse while moving too (it ended at the first reverse
+  speed sample); the side-of-neutral clamp keeps it from making brake pulses.
+- The reverse start assist holds after confirmed motion until 0.5 m/s or 80%
+  of the target, whichever is lower (`handover_mps`, `handover_frac`).
+- Info payload limit 2048 to 3072 B; the payload is about 2.0 kB (16 chunks).
+- ESC PWM bounds 800/2200 to 1000/2000 us, equal to the ESC calibration
+  endpoints. RC fast-mode endpoints follow at 25%: 1375/1625 us (were
+  1325/1675).
+
+### Removed
+- `stiction_kick_rev_us`, `stiction_speed_mps` and their info keys; the start
+  assist replaces them.
+
 ## [0.9.0] - 2026-10-26
 
 Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
