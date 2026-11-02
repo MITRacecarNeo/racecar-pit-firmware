@@ -140,7 +140,7 @@ values come from `config/config.h` unless noted.
 | `speed.slow_mps` | 1.000 | setpoint at full command with swA up |
 | `speed.deadband` | 0.010 | normalized commands inside this are stop |
 | `pid.kp`, `pid.ki`, `pid.kd` | 20.000, 60.000, 0.000 | speed loop gains, us per m/s |
-| `pid.ki_rev` | 100.000 | integral gain while the target is reverse |
+| `pid.ki_rev` | 60.000 | integral gain while the target is reverse |
 | `pid.max_integral` | 150.000 | integrator clamp |
 | `pid.kp_boost`, `pid.boost_error_mps` | 60.000, 0.250 | gain above this error |
 | `pid.ff_fwd_us`, `pid.ff_rev_us` | 69.0, 93.0 | static feedforward across the ESC deadband |

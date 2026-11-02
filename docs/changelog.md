@@ -35,8 +35,9 @@ All notable changes to this project. Format: Keep a Changelog
 - Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
   69 us + 12.5 us per m/s (was 55 + 14), reverse 93 us + 38 us per m/s (was
   28 + 8), drawn through the running points above the reverse dead zone.
-- The reverse boost ends at confirmed motion instead of at -0.05 m/s.
-- Separate reverse integral gain `ki_rev` 100 (forward `ki` stays 60).
+- Separate reverse integral gain `ki_rev` (60, the same as forward `ki`).
+- `kp_boost` applies in reverse while moving too (it ended at the first reverse
+  speed sample); the side-of-neutral clamp keeps it from making brake pulses.
 - The reverse start assist holds after confirmed motion until 0.5 m/s or 80%
   of the target, whichever is lower (`handover_mps`, `handover_frac`).
 - Info payload limit 2048 to 3072 B; the payload is about 2.0 kB (16 chunks).

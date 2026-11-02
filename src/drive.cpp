@@ -172,10 +172,11 @@ namespace
       return speed_pwm_neutral;
     }
 
-    // In reverse the boost only helps the car off a standstill; once motion is
-    // confirmed, a noisy speed sample times kp_boost swings the output too far.
-    const bool reverse_moving = dir < 0 && assist.confirmed;
-    const float active_kp = (fabsf(err) > err_threshold && !reverse_moving) ? kp_boost : kp;
+    // The boost adds acceleration on a large error in both directions. The
+    // side-of-neutral clamp below keeps a noisy sample from swinging the
+    // output into a brake pulse, and the start assist keeps twitch readings
+    // out of the error.
+    const float active_kp = fabsf(err) > err_threshold ? kp_boost : kp;
     const float p_term = active_kp * err;
 
     const float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;

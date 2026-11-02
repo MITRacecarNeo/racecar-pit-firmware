@@ -277,7 +277,7 @@ namespace cfg
         constexpr float ki = 60.0f;
         // Reverse sits on a steep part of the ESC curve, where the feedforward
         // alone lands tenths of a m/s off; the integrator does the tracking.
-        constexpr float ki_rev = 100.0f;
+        constexpr float ki_rev = 60.0f;
         constexpr float max_integral = 150.0f; // anti-windup limit
         constexpr float kd = 0.0f;
         constexpr float kd_filter_alpha = 0.05f;
