@@ -335,18 +335,21 @@ board the first write after a soft reboot fails, so the script retries and
 prints the attempt that succeeded. Linux needs PJRC's `00-teensy.rules` in
 `/etc/udev/rules.d/` (a copy ships in PlatformIO's `tool-teensy` package). The platform and every library are pinned in
 `platformio.ini`, so one commit always builds the same firmware. The build
-embeds the short commit and a dirty flag (`scripts/build_flags.py`); the info
-reply reports both.
+embeds the short commit, a dirty flag and the latest commit label in a
+generated header (`.pio/build_info/build_info.h`, from
+`scripts/build_flags.py`) read only by `src/version.h`; the info reply reports
+them. A new commit recompiles the files that include it, not the Teensy core
+and libraries.
 
 `/dev/ttyACM0` is the USB debug and flash port only. The drive link is the GPIO
 UART (Teensy `Serial1` to the Pi's `/dev/neo-pit-pcb`, a udev symlink to
 `ttyAMA0` on Pi 5 / Ubuntu). The Pi needs `enable_uart=1` and a reboot to
 activate GPIO14/15.
 
-The Teleplot-style speed-loop trace is a build option:
+The Teleplot-style speed-loop trace is its own build, `teensy41_trace`:
 
 ```sh
-PLATFORMIO_BUILD_FLAGS="-DRCN_SERIAL_PLOT" pio run -t upload
+pio run -e teensy41_trace -t upload
 ```
 
 It prints the latest target speed, measured speed and ESC PWM on the USB

@@ -28,6 +28,10 @@ All notable changes to this project. Format: Keep a Changelog
   0.9.0 ESC setup.
 
 ### Changed
+- Build stamp (commit, dirty flag, label) in a generated header read by
+  `src/version.h` instead of global `-D` flags, so a new commit no longer
+  rebuilds the Teensy core and libraries.
+- Speed-loop trace is its own environment, `teensy41_trace`.
 - Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
   69 us + 12.5 us per m/s (was 55 + 14), reverse 93 us + 38 us per m/s (was
   28 + 8), drawn through the running points above the reverse dead zone.
