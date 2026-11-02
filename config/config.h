@@ -283,14 +283,14 @@ namespace cfg
         constexpr float kd_filter_alpha = 0.05f;
 
         // Feedforward and gain scheduling.
-        // Fitted open loop on the 1000/1500/2000 ESC calibration (docs/test-log.md).
-        // Reverse is drawn through the running points above the ESC's reverse
-        // dead zone (about 105 us), not extended into it.
+        // On the 1000/1500/2000 ESC calibration (docs/test-log.md): forward fitted
+        // open loop; reverse from the PWM the closed loop settles at, since
+        // open-loop reverse points depend on how hard the launch was.
         constexpr float deadband_fwd_us = 69.0f;
-        constexpr float deadband_rev_us = 93.0f;
+        constexpr float deadband_rev_us = 94.0f;
 
         constexpr float kv_ff_fwd = 12.5f;
-        constexpr float kv_ff_rev = 38.0f;
+        constexpr float kv_ff_rev = 55.0f;
 
         constexpr float kp_boost = 60.0f;
         constexpr float err_threshold = 0.25f;

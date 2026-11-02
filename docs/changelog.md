@@ -33,8 +33,8 @@ All notable changes to this project. Format: Keep a Changelog
   rebuilds the Teensy core and libraries.
 - Speed-loop trace is its own environment, `teensy41_trace`.
 - Feedforward refit on the 1000/1500/2000 ESC calibration (TL-025): forward
-  69 us + 12.5 us per m/s (was 55 + 14), reverse 93 us + 38 us per m/s (was
-  28 + 8), drawn through the running points above the reverse dead zone.
+  69 us + 12.5 us per m/s (was 55 + 14), reverse 94 us + 55 us per m/s (was
+  28 + 8), from the PWM the closed loop settles at.
 - Separate reverse integral gain `ki_rev` (60, the same as forward `ki`).
 - `kp_boost` applies in reverse while moving too (it ended at the first reverse
   speed sample); the side-of-neutral clamp keeps it from making brake pulses.
