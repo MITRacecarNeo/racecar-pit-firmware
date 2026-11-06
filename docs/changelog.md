@@ -11,6 +11,21 @@ All notable changes to this project. Format: Keep a Changelog
 - `scripts/dotmatrix_preview.py`: renders dot matrix text as PNG (or GIF when
   it scrolls) from the firmware font and prints its margins, for checking
   text without the display connected. Six host tests plus margin checks.
+- Stall guard logic (`src/stall_guard.*`, `cfg::STALL_GUARD`): throttle
+  commanded, wheels below 0.1 m/s and battery current above 10 A for 0.5 s
+  trips to neutral until the command is neutral, then a 2 s cooldown; the
+  third trip within 60 s gives a 30 s lockout. Not yet connected to the
+  drive output. 11 host tests (`test_stall`).
+- Display state logic (`src/display_state.*`): LOAD and a loading strip
+  until the first Pi command, OFF and a dark strip once commands stop,
+  blank matrix and battery meter while the Pi draws nothing; stall words
+  WARN / HIGH / STALL 1 s each and a 2 s orange strip flash. Not yet
+  connected to the displays. 13 host tests (`test_display`).
+
+### Fixed
+- A Pi command timestamp older than 60 s is cleared, so the 71.6 min wrap of
+  the microsecond clock can no longer make a long-gone Pi command look fresh
+  for up to 1 s.
 
 ### Changed
 - Version 0.9.2.

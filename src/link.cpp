@@ -186,6 +186,7 @@ void UARTRx()
       framer.reset();
       PROF_COUNT(rx_short);
     }
+    lastRxTime = expireRxTime(lastRxTime, micros(), cfg::DISP::rx_expire_us);
     threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }

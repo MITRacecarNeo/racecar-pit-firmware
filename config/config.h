@@ -2,7 +2,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "display_state.h"
 #include "packets.h"
+#include "stall_guard.h"
 #include "start_assist.h"
 
 // All tunables live here. Nothing in src/ should hardcode a value that belongs
@@ -206,6 +208,15 @@ namespace cfg
     {
         constexpr uint32_t cmd_timeout_ms = 1000; // Pi command staleness -> idle defaults
         constexpr uint32_t led_load_ms = 10000;   // rainbow sweep duration on Pi connect
+        // No Pi command this long after power-on: show OFF instead of LOAD. The
+        // Pi takes about 90 s to boot.
+        constexpr uint32_t boot_timeout_ms = 180000;
+        // {word_ms, flash_ms, blink_ms}: each stall word 1 s; the strip
+        // flashes orange for 2 s after a trip.
+        constexpr DisplayParams stall_display = {1000, 2000, 250};
+        // A Pi command timestamp older than this is cleared, well inside the
+        // 71.6 min wrap of the microsecond clock.
+        constexpr uint32_t rx_expire_us = 60000000;
         // The idle LED bar reads charge, not volts; endpoints and the 2S curve
         // live in battery.h (batt_empty_mv / batt_full_mv).
     }
@@ -306,6 +317,16 @@ namespace cfg
         // slow for the running feedforward to carry it.
         constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
         constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000, 0.5f, 0.8f};
+    }
+
+    namespace STALL_GUARD
+    {
+        constexpr bool enabled = true;
+        // Battery current includes the Pi, about 2 A at idle. Normal reverse
+        // starts peak near 16 A for up to 0.19 s; a locked rotor holds 12-16 A.
+        // {trip_a, moving_mps, trip_us, cooldown_us, lockout_us, lockout_trips,
+        // lockout_window_us}
+        constexpr StallParams params = {10.0f, 0.1f, 500000, 2000000, 30000000, 3, 60000000};
     }
 
     // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command
