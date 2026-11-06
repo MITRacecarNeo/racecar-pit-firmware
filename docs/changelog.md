@@ -5,6 +5,16 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+### Added
+- `src/small_font.h`: narrow capitals for the 8 x 24 dot matrix, 6 rows with
+  a 1-dot margin above and below.
+- `scripts/dotmatrix_preview.py`: renders dot matrix text as PNG (or GIF when
+  it scrolls) from the firmware font and prints its margins, for checking
+  text without the display connected. Six host tests plus margin checks.
+
+### Changed
+- Version 0.9.2.
+
 ## [0.9.1] - 2026-11-02
 
 Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are

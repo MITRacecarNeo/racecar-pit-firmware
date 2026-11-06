@@ -1,9 +1,9 @@
 [project]
 name = "racecar-pit-firmware-tools"
-version = "0.9.1"
+version = "0.9.2"
 description = "Bench tools for the NEO-PIT Teensy firmware"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pyserial"]
+dependencies = ["numpy", "pillow", "pyserial"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/scripts"]
