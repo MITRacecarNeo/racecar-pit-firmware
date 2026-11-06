@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "display_state.h"
+#include "led_patterns.h"
 #include "packets.h"
 #include "stall_guard.h"
 #include "start_assist.h"
@@ -61,6 +62,12 @@ namespace cfg
         constexpr uint16_t num_leds = 84;
         constexpr uint8_t led_pin = 9;
         constexpr uint8_t brightness = 25;
+        // Brand gradient (crimson #A01936 to orange #F49A4B), gamma 2.2 for
+        // the LEDs, scaled to full red so the global brightness keeps the
+        // steps. Orange at the back middle, crimson at the front tips.
+        constexpr LedGradient gradient = {{255, 93, 19}, {255, 6, 22}};
+        constexpr Rgb stall_orange = {255, 93, 19};
+        constexpr uint32_t loading_step_ms = 30; // loading waves, ms per LED
     }
 
     namespace ESC_10BL60_G2
@@ -260,7 +267,6 @@ namespace cfg
         constexpr uint16_t tick_ms = 1;          // worker thread yield
         constexpr uint16_t loop_tick_ms = 25;    // Arduino loop() yield
         constexpr uint16_t disp_tick_ms = 50;    // dot matrix refresh
-        constexpr uint16_t splash_tick_ms = 20;  // boot splash animation step
         constexpr uint16_t info_tick_ms = 10;    // info builder poll
     }
 
