@@ -62,12 +62,11 @@ namespace cfg
         constexpr uint16_t num_leds = 84;
         constexpr uint8_t led_pin = 9;
         constexpr uint8_t brightness = 25;
-        // Brand gradient (crimson #A01936 to orange #F49A4B), gamma 2.2 for
-        // the LEDs, scaled to full red so the global brightness keeps the
-        // steps. Orange at the back middle, crimson at the front tips.
-        constexpr LedGradient gradient = {{255, 93, 19}, {255, 6, 22}};
-        constexpr Rgb stall_orange = {255, 93, 19};
-        constexpr uint32_t loading_step_ms = 30; // loading waves, ms per LED
+        constexpr Rgb bar_red = {255, 0, 0};      // battery meter and loading bar
+        constexpr Rgb stall_orange = {255, 40, 0}; // stall flash
+        // Loading bar from LED 0 to the last over this long after power-on,
+        // about the time the Pi takes to start the driver.
+        constexpr uint32_t loading_bar_ms = 60000;
     }
 
     namespace ESC_10BL60_G2

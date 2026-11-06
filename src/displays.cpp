@@ -152,13 +152,13 @@ void updateLedStrip()
   case StripShow::stall_dark:
     break;
   case StripShow::loading:
-    loadingScroll(px, N, now, cfg::RGB_LED_WS2812B::loading_step_ms, cfg::RGB_LED_WS2812B::gradient);
+    loadingBar(px, N, now, cfg::RGB_LED_WS2812B::loading_bar_ms, cfg::RGB_LED_WS2812B::bar_red);
     break;
   case StripShow::battery:
   {
     const float volts = readShared(power_sample).volts;
     const float mv = constrain(volts * 1000.0f, 0.0f, 65535.0f);
-    batteryMeter(px, N, batterySocPercent((uint16_t)mv), cfg::RGB_LED_WS2812B::gradient);
+    batteryMeter(px, N, batterySocPercent((uint16_t)mv), cfg::RGB_LED_WS2812B::bar_red);
     break;
   }
   case StripShow::pi_pixels:

@@ -7,7 +7,7 @@
 // tests/. The Teensy runs on its own supply, so it sees the Pi only through
 // the command link:
 //
-//   boot_wait  power-on until the first Pi command; LOAD, gradient scroll
+//   boot_wait  power-on until the first Pi command; LOAD, loading bar
 //   live       Pi commands fresh; Pi content, else blank matrix and battery meter
 //   lost       commands stopped after live (shutdown, brownout, driver
 //              restart), or boot_wait timed out; OFF, strip dark
@@ -42,7 +42,7 @@ enum class MatrixShow : uint8_t
 enum class StripShow : uint8_t
 {
   off,
-  loading,     // gradient scroll while the Pi boots
+  loading,     // loading bar while the Pi boots
   battery,     // charge meter from the back middle outward
   pi_pixels,
   driver_start, // rainbow sweep when the driver launches

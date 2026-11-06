@@ -7,6 +7,6 @@ void initLedStrip();
 // (src/display_state.h).
 void DotMatrix();
 
-// LED strip frame: loading waves, battery meter, Pi pixels, driver-start
+// LED strip frame: loading bar, battery meter, Pi pixels, driver-start
 // rainbow or dark (src/display_state.h). Called from loop(), not its own thread.
 void updateLedStrip();

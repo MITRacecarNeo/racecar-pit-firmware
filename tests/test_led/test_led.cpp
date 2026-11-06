@@ -5,12 +5,11 @@
 
 namespace
 {
-  const LedGradient G = {{255, 93, 19}, {255, 6, 22}};
+  const Rgb RED = {255, 0, 0};
   constexpr uint16_t N = 84;
   Rgb px[N];
 
   bool lit(const Rgb &c) { return c.r || c.g || c.b; }
-  bool same(const Rgb &a, const Rgb &b) { return a.r == b.r && a.g == b.g && a.b == b.b; }
   uint16_t litCount()
   {
     uint16_t k = 0;
@@ -23,90 +22,78 @@ namespace
 void setUp() {}
 void tearDown() {}
 
-void test_gradient_runs_inner_to_outer()
+void test_meter_fills_from_both_front_ends()
 {
-  TEST_ASSERT_TRUE(same(G.inner, gradientAt(0, 42, G)));
-  TEST_ASSERT_TRUE(same(G.outer, gradientAt(41, 42, G)));
-  TEST_ASSERT_TRUE(same(G.outer, gradientAt(99, 42, G)));
-  const Rgb mid = gradientAt(20, 42, G);
-  TEST_ASSERT_TRUE(mid.g < G.inner.g && mid.g > G.outer.g);
-}
-
-void test_meter_grows_from_the_back_middle()
-{
-  batteryMeter(px, N, 10, G); // 4 of 42 per side, rounded
+  batteryMeter(px, N, 10, RED); // 10% of 42 per side = 4
   TEST_ASSERT_EQUAL_UINT16(8, litCount());
-  for (uint16_t i = 38; i <= 45; i++)
+  for (uint16_t i = 0; i < 4; i++)
+  {
     TEST_ASSERT_TRUE(lit(px[i]));
-  TEST_ASSERT_FALSE(lit(px[37]));
-  TEST_ASSERT_FALSE(lit(px[46]));
-  TEST_ASSERT_TRUE(same(G.inner, px[41]));
-  TEST_ASSERT_TRUE(same(G.inner, px[42]));
+    TEST_ASSERT_TRUE(lit(px[N - 1 - i]));
+  }
+  TEST_ASSERT_FALSE(lit(px[4]));
+  TEST_ASSERT_FALSE(lit(px[N - 5]));
+  TEST_ASSERT_FALSE(lit(px[41]));
+  TEST_ASSERT_FALSE(lit(px[42]));
 }
 
-void test_meter_full_and_empty()
+void test_meter_full_meets_at_the_back_middle()
 {
-  batteryMeter(px, N, 100, G);
+  batteryMeter(px, N, 100, RED);
   TEST_ASSERT_EQUAL_UINT16(N, litCount());
-  TEST_ASSERT_TRUE(same(G.outer, px[0]));
-  TEST_ASSERT_TRUE(same(G.outer, px[N - 1]));
-  batteryMeter(px, N, 0, G);
+  batteryMeter(px, N, 250, RED);
+  TEST_ASSERT_EQUAL_UINT16(N, litCount());
+  batteryMeter(px, N, 0, RED);
   TEST_ASSERT_EQUAL_UINT16(0, litCount());
-  batteryMeter(px, N, 250, G);
+}
+
+void test_meter_matches_the_previous_rounding()
+{
+  // Previous firmware: half = soc * (N / 2) / 100, truncated.
+  for (uint8_t soc = 0; soc <= 100; soc++)
+  {
+    batteryMeter(px, N, soc, RED);
+    TEST_ASSERT_EQUAL_UINT16(2 * (soc * (N / 2) / 100), litCount());
+  }
+}
+
+void test_loading_bar_fills_from_zero_over_the_duration()
+{
+  loadingBar(px, N, 0, 60000, RED);
+  TEST_ASSERT_EQUAL_UINT16(0, litCount());
+  loadingBar(px, N, 30000, 60000, RED);
+  TEST_ASSERT_EQUAL_UINT16(42, litCount());
+  for (uint16_t i = 0; i < 42; i++)
+    TEST_ASSERT_TRUE(lit(px[i]));
+  TEST_ASSERT_FALSE(lit(px[42]));
+  loadingBar(px, N, 59999, 60000, RED);
+  TEST_ASSERT_EQUAL_UINT16(83, litCount());
+}
+
+void test_loading_bar_stays_full_after_the_duration()
+{
+  loadingBar(px, N, 60000, 60000, RED);
+  TEST_ASSERT_EQUAL_UINT16(N, litCount());
+  loadingBar(px, N, 170000, 60000, RED);
   TEST_ASSERT_EQUAL_UINT16(N, litCount());
 }
 
-void test_meter_is_symmetric()
+void test_config_colors_and_timing()
 {
-  batteryMeter(px, N, 63, G);
-  for (uint16_t i = 0; i < N / 2; i++)
-    TEST_ASSERT_TRUE(same(px[i], px[N - 1 - i]));
-}
-
-void test_loading_lights_the_whole_band_symmetrically()
-{
-  loadingScroll(px, N, 12345, 30, G);
-  TEST_ASSERT_EQUAL_UINT16(N, litCount());
-  for (uint16_t i = 0; i < N / 2; i++)
-    TEST_ASSERT_TRUE(same(px[i], px[N - 1 - i]));
-}
-
-void test_loading_moves_outward_one_led_per_step()
-{
-  Rgb before[N];
-  loadingScroll(before, N, 0, 30, G);
-  loadingScroll(px, N, 30, 30, G);
-  // The color next to the back middle moves one LED outward each step.
-  for (uint16_t d = 0; d + 1 < N / 2; d++)
-    TEST_ASSERT_TRUE(same(before[N / 2 + d], px[N / 2 + d + 1]));
-}
-
-void test_loading_repeats_after_a_full_period()
-{
-  Rgb a[N];
-  loadingScroll(a, N, 0, 30, G);
-  loadingScroll(px, N, 30 * N, 30, G); // period is 2 * half = N steps
-  for (uint16_t i = 0; i < N; i++)
-    TEST_ASSERT_TRUE(same(a[i], px[i]));
-}
-
-void test_config_gradient_is_orange_inside_crimson_outside()
-{
-  const LedGradient &g = cfg::RGB_LED_WS2812B::gradient;
-  TEST_ASSERT_TRUE(g.inner.g > g.outer.g);
-  TEST_ASSERT_EQUAL_UINT16(84, cfg::RGB_LED_WS2812B::num_leds);
+  const Rgb &r = cfg::RGB_LED_WS2812B::bar_red;
+  TEST_ASSERT_TRUE(r.r == 255 && r.g == 0 && r.b == 0);
+  TEST_ASSERT_EQUAL_UINT32(60000, cfg::RGB_LED_WS2812B::loading_bar_ms);
+  TEST_ASSERT_TRUE(cfg::DISP::boot_timeout_ms > cfg::RGB_LED_WS2812B::loading_bar_ms);
 }
 
 int main()
 {
   UNITY_BEGIN();
-  RUN_TEST(test_gradient_runs_inner_to_outer);
-  RUN_TEST(test_meter_grows_from_the_back_middle);
-  RUN_TEST(test_meter_full_and_empty);
-  RUN_TEST(test_meter_is_symmetric);
-  RUN_TEST(test_loading_lights_the_whole_band_symmetrically);
-  RUN_TEST(test_loading_moves_outward_one_led_per_step);
-  RUN_TEST(test_loading_repeats_after_a_full_period);
-  RUN_TEST(test_config_gradient_is_orange_inside_crimson_outside);
+  RUN_TEST(test_meter_fills_from_both_front_ends);
+  RUN_TEST(test_meter_full_meets_at_the_back_middle);
+  RUN_TEST(test_meter_matches_the_previous_rounding);
+  RUN_TEST(test_loading_bar_fills_from_zero_over_the_duration);
+  RUN_TEST(test_loading_bar_stays_full_after_the_duration);
+  RUN_TEST(test_config_colors_and_timing);
   return UNITY_END();
 }

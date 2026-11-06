@@ -21,16 +21,16 @@ All notable changes to this project. Format: Keep a Changelog
   blank matrix and battery meter while the Pi draws nothing; stall words
   WARN / HIGH / STALL 1 s each and a 2 s orange strip flash. 13 host tests
   (`test_display`).
-- LED strip patterns (`src/led_patterns.*`): battery meter growing from the
-  back middle outward, orange there and crimson at the front tips (brand
-  gradient); loading waves moving outward. 8 host tests (`test_led`).
+- LED strip patterns (`src/led_patterns.*`): red loading bar from LED 0 to
+  the last over 60 s after power-on; battery meter unchanged (red, filling
+  from both front ends toward the back). 6 host tests (`test_led`).
 
 ### Changed
 - Default displays follow the display state logic: the dot matrix shows LOAD
   until the Pi connects, OFF once its commands stop, and is blank while the
   Pi draws nothing; the I / A / M mode glyphs and the boot splash are gone.
   Dot matrix text uses the narrow font. The LED strip shows the loading
-  waves, then the battery meter, and goes dark when the Pi stops.
+  bar, then the battery meter, and goes dark when the Pi stops.
 
 ### Fixed
 - A Pi command timestamp older than 60 s is cleared, so the 71.6 min wrap of
