@@ -13,6 +13,7 @@
 #include "profile.h"
 #include "watchdog.h"
 #include "shared.h"
+#include "speed_store.h"
 
 namespace
 {
@@ -122,7 +123,8 @@ void InfoBuilder()
       if (p != nullptr)
       {
         const InfoStatus status = {imu_ok, power_ok, wdt::lastResetCause(), wdt::resetFlags(), wdt::armed(),
-                                   imu_ok ? imu_regs : Lsm9ds1Registers{}, readShared(dip_summary)};
+                                   imu_ok ? imu_regs : Lsm9ds1Registers{}, readShared(dip_summary),
+                                   speedConstantsInfo()};
         p->len = writeFirmwareInfo(status, p->data, sizeof(p->data));
         const uint16_t crc = crc16_ccitt((const uint8_t *)p->data, p->len);
         if (built && (p->len != last_len || crc != last_crc))

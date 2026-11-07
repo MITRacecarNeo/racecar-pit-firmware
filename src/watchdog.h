@@ -35,6 +35,9 @@ namespace wdt
     // Refreshes when every context beat this round; call from the drive tick.
     void tick();
     bool armed();
+    // Around a flash write: true sets the timeout to flash_timeout_ms and
+    // refreshes; false restores timeout_ms and refreshes. No-op until armed.
+    void flashWrite(bool active);
 
 #ifdef RCN_WDT_TEST
     // Test build only: the context whose code matches stops (see main.cpp).

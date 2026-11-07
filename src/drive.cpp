@@ -7,6 +7,7 @@
 #include "config.h"
 #include "drive_map.h"
 #include "profile.h"
+#include "speed_store.h"
 #include "start_assist.h"
 #include "watchdog.h"
 #include "shared.h"
@@ -143,6 +144,8 @@ namespace
   {
     using namespace cfg::PID_CTRL;
     using cfg::ESC_10BL60_G2::speed_pwm_max;
+    // Per-car values (src/speed_store.h); the rest of PID_CTRL is fleet-wide.
+    const SpeedConstants &k = speedConstants();
     using cfg::ESC_10BL60_G2::speed_pwm_min;
     using cfg::ESC_10BL60_G2::speed_pwm_neutral;
 
@@ -151,17 +154,20 @@ namespace
 
     if (target_mps > cfg::ESC_10BL60_G2::cmd_deadband)
     {
-      ff_term = deadband_fwd_us + kv_ff_fwd * target_mps;
+      ff_term = k.ff_fwd_us + k.kv_ff_fwd * target_mps;
     }
     else if (target_mps < -cfg::ESC_10BL60_G2::cmd_deadband)
     {
-      ff_term = -deadband_rev_us + kv_ff_rev * target_mps;
+      ff_term = -k.ff_rev_us + k.kv_ff_rev * target_mps;
     }
 
     const int8_t dir = target_mps > 0.0f ? 1 : (target_mps < 0.0f ? -1 : 0);
     const bool confirmed =
         motionConfirmed(motion, dir, measured_mps, now_us, start_confirm_intervals, start_confirm_us);
-    const StartAssistParams &assist_params = dir > 0 ? start_assist_fwd : start_assist_rev;
+    StartAssistParams rev_params = start_assist_rev;
+    rev_params.from_us = k.start_rev_from_us;
+    rev_params.max_us = k.start_rev_max_us;
+    const StartAssistParams &assist_params = dir > 0 ? start_assist_fwd : rev_params;
     const StartAssistOutput assist = startAssistTick(startAssist, dir, confirmed,
                                                      handoverSpeedReached(target_mps, measured_mps, assist_params),
                                                      now_us, assist_params);
@@ -176,7 +182,7 @@ namespace
     // side-of-neutral clamp below keeps a noisy sample from swinging the
     // output into a brake pulse, and the start assist keeps twitch readings
     // out of the error.
-    const float active_kp = fabsf(err) > err_threshold ? kp_boost : kp;
+    const float active_kp = fabsf(err) > k.boost_error_mps ? k.kp_boost : k.kp;
     const float p_term = active_kp * err;
 
     const float raw_deriv = (dt > 1e-4f) ? (err - speedLastErr) / dt : 0.0f;
@@ -187,7 +193,7 @@ namespace
     // Integrate only off the limits, or when the error pushes back into range.
     const float pwm_lo = target_mps > 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_min;
     const float pwm_hi = target_mps < 0.0f ? (float)speed_pwm_neutral : (float)speed_pwm_max;
-    const float active_ki = dir < 0 ? ki_rev : ki;
+    const float active_ki = dir < 0 ? k.ki_rev : k.ki;
     const float predicted_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
     const bool hit_upper_limit = (predicted_pwm >= pwm_hi) && (err > 0);
     const bool hit_lower_limit = (predicted_pwm <= pwm_lo) && (err < 0);
@@ -196,7 +202,7 @@ namespace
     const bool assisting = assist.offset_us > 0.0f;
     if (!hit_upper_limit && !hit_lower_limit && !assisting)
       speedIntegral += err * dt;
-    speedIntegral = constrain(speedIntegral, -max_integral, max_integral);
+    speedIntegral = constrain(speedIntegral, -k.max_integral, k.max_integral);
 
     float final_pwm = speed_pwm_neutral + ff_term + p_term + (active_ki * speedIntegral) + d_term;
     if (assisting)

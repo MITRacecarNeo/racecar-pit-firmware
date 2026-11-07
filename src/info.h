@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "car_constants.h"
 #include "dip_record.h"
 
 // Firmware info reply payload: ASCII, one "key=value\n" line per setting.
@@ -41,6 +42,7 @@ struct InfoStatus
     bool watchdog_armed;
     Lsm9ds1Registers imu_regs;
     DipSummary dips;
+    ConstantsInfo constants; // valid == false: the built-in values
 };
 
 // Appends "key=value\n" lines to a fixed buffer. Values are formatted without

@@ -39,6 +39,8 @@ I/O. There is no RTOS and no dynamic allocation after boot.
 | `src/seqlock.h` | Single-writer value readable from an interrupt; Arduino-free | none |
 | `src/start_assist.{h,cpp}` | Motion confirmation from hall intervals since standstill, start assist ramp, timeout and rest; Arduino-free | none |
 | `src/esc_cal.{h,cpp}` | ESC calibration steps, status line and LED bar for the calibration build; Arduino-free | none |
+| `src/car_constants.{h,cpp}` | Per-car speed constants: EEPROM block encode and check, `cal` command handling; Arduino-free | `crc16`, `info` |
+| `src/speed_store.{h,cpp}` | Loads the constants at boot, swaps them in for the drive tick, answers USB `cal` lines, writes the EEPROM | `car_constants`, EEPROM |
 | `src/stall_guard.{h,cpp}` | Stall detection, trip, cooldown and lockout; the packed state word for telemetry and displays; Arduino-free | none |
 | `src/dip_record.{h,cpp}` | Lowest bus voltage, dip count and last dip time; Arduino-free | none |
 | `src/display_state.{h,cpp}` | Pi link state (boot wait, live, lost) and what each display shows; stale command time expiry; Arduino-free | `stall_guard` |
@@ -51,6 +53,7 @@ I/O. There is no RTOS and no dynamic allocation after boot.
 | `src/watchdog.{h,cpp}`, `src/heartbeat.h` | RTWDOG supervision of every context; reset cause | `Heartbeat` (Arduino-free) |
 | `src/profile.{h,cpp}`, `src/prof_stats.{h,cpp}` | Profiling hooks and statistics; active only with `RCN_PROFILE` | cycle counter, IntervalTimer |
 | `scripts/pit_uart.py` | Bench tool: drives the link from the Pi without ROS | numpy, pyserial |
+| `scripts/car_constants.py` | Reads, sets and saves the per-car constants over USB serial | pyserial |
 | `scripts/dotmatrix_preview.py` | Renders dot matrix text from `src/small_font.h` as images | Pillow |
 
 ## Threads
@@ -63,7 +66,7 @@ loop does not.
 
 | Context | Period | Reads | Writes |
 | ------- | ------ | ----- | ------ |
-| Drive tick (interrupt) | 1 ms | `rc_channels`, `drive_cmd`, `power_sample`, hall ISR state | servo + ESC PWM, `measured_speed_mps`, `manual_override`, `rc_driving`, `stall_word`, `stall_trip_ms` |
+| Drive tick (interrupt) | 1 ms | `rc_channels`, `drive_cmd`, `power_sample`, speed constants, hall ISR state | servo + ESC PWM, `measured_speed_mps`, `manual_override`, `rc_driving`, `stall_word`, `stall_trip_ms` |
 | `RxReceive` | 1 ms | PPM pin | `rc_channels` |
 | `ReadCurrAndVolt` | 10 ms | INA226 (I2C) | `power_sample`, `dip_summary`, `power_ok` |
 | `ReadIMUStates` | 4 ms | LSM9DS1 (I2C) | `imu_sample`, `imu_regs`, `imu_ok` |
@@ -71,7 +74,7 @@ loop does not.
 | `InfoBuilder` | 10 ms | sensor status, `imu_regs`, reset cause, `dip_summary` | info buffer |
 | `UARTRx` | 1 ms | `Serial1` | `drive_cmd`, display buffers, `system_state`, `lastRxTime` (cleared after 60 s stale) |
 | `DotMatrix` | 50 ms | `dotmatrix_cmd`, `system_state`, `lastRxTime`, `stall_word` | MAX7219 (SPI) |
-| `loop()` | 25 ms | `led_cmd`, `system_state`, `lastRxTime`, `power_sample`, `stall_word` | WS2812B strip, serial trace |
+| `loop()` | 25 ms | `led_cmd`, `system_state`, `lastRxTime`, `power_sample`, `stall_word`, USB `cal` lines | WS2812B strip, serial trace, speed constants, EEPROM |
 
 The drive tick runs at priority 144 and the telemetry tick at 160, both below
 the Servo, PPM, hall and serial interrupts (128), so pulse edges and RC pulse

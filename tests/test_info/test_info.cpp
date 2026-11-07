@@ -230,6 +230,26 @@ static void test_payload_reports_power_range_and_dips(void)
     TEST_ASSERT_EQUAL_STRING("123456", valueOf("power.last_dip_ms"));
 }
 
+static void test_payload_reports_the_loaded_constants(void)
+{
+    buildPayload();
+    TEST_ASSERT_EQUAL_STRING("builtin", valueOf("cal.source"));
+    TEST_ASSERT_EQUAL_STRING("none", valueOf("cal.crc"));
+    TEST_ASSERT_EQUAL_STRING("94.000", valueOf("pid.ff_rev_us"));
+    TEST_ASSERT_EQUAL_STRING("160.000", valueOf("pid.start_rev_from_us"));
+    TEST_ASSERT_EQUAL_STRING("0.000", valueOf("pid.kd"));
+
+    SpeedConstants c = cfg::PID_CTRL::speed_defaults;
+    c.ff_rev_us = 110.0f;
+    InfoStatus status = {true, true, "reset", 1, true, Lsm9ds1Registers{}};
+    status.constants = {true, c, "eeprom", 0xBEEF, 20261106, BlockStatus::ok};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("eeprom", valueOf("cal.source"));
+    TEST_ASSERT_EQUAL_STRING("beef", valueOf("cal.crc"));
+    TEST_ASSERT_EQUAL_STRING("2026-11-06", valueOf("cal.written"));
+    TEST_ASSERT_EQUAL_STRING("110.000", valueOf("pid.ff_rev_us"));
+}
+
 static void test_payload_reports_stall_protection(void)
 {
     buildPayload();
@@ -337,5 +357,6 @@ int main(int, char **)
     RUN_TEST(test_slot_fits_on_the_wire);
     RUN_TEST(test_payload_reports_power_range_and_dips);
     RUN_TEST(test_payload_reports_stall_protection);
+    RUN_TEST(test_payload_reports_the_loaded_constants);
     return UNITY_END();
 }

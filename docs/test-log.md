@@ -4,6 +4,45 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-029 - 2026-11-06
+
+### Setup
+Reference car, stationary, teleop running. Per-car constants build over USB
+serial with `scripts/car_constants.py`; soft reboots with
+`teensy_loader_cli -s -b` (no flash). Reset cause and restarts from the
+firmware info and the pit_node log.
+
+### Hypothesis
+Saved constants load at boot, an erased block falls back to the fleet
+values, and saves do not reset the board.
+
+### Method
+1. `get` on an empty EEPROM; `set pid.ff_rev_us=95`; `set pid.kp=999`; `save`;
+   soft reboot; `get`.
+2. Stress: alternate `pid.ff_rev_us` 95 and 96 with a `save` after each,
+   2800 saves on the first build (700, then 2100) and 2100 on the fixed build.
+3. `erase`, soft reboot, `get`.
+
+### Observations
+| Step | Result |
+| ---- | ------ |
+| Empty EEPROM | `cal.source=builtin`, `cal.eeprom=empty`, `pid.ff_rev_us=94.000` |
+| `set pid.kp=999` | refused, `bad value pid.kp` |
+| Save, reboot | `cal.source=eeprom`, `cal.crc=4f7c`, `cal.written=2026-11-06`, `pid.ff_rev_us=95.000` |
+| Stress, 100 ms watchdog throughout | 3 board resets in 2800 saves, cause `watchdog`; block still `ok` after each |
+| Stress, watchdog 1.5 s during a save | 0 resets in 2100 saves; 3 saves over 40 ms (sector erase), longest 84.9 ms; median 25.5 ms |
+| Erase, reboot | `cal.source=builtin`, `cal.eeprom=empty` |
+
+- Save times are measured on the Pi from command to reply.
+- About one save in 700 fills a flash sector; the erase and rewrite then
+  hold the loop past the 100 ms watchdog.
+
+### Conclusion
+Supported after the fix: `wdt::flashWrite` sets the watchdog to 1.5 s for the
+duration of a save. The car was left on the fleet values.
+
+---
+
 ## TL-028 - 2026-11-06
 
 ### Setup

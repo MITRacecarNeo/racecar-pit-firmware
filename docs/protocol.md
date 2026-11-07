@@ -168,6 +168,9 @@ values come from `config/config.h` unless noted.
 | `imu.gyro_range_dps`, `imu.mag_range_gauss` | 500, 8 | gyro and mag full scale |
 | `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |
+| `cal.source` | builtin | where the per-car `pid.*` values in use came from: `eeprom`, `builtin`, or either with `_modified` after an unsaved `cal set` |
+| `cal.format`, `cal.eeprom` | 1, empty | EEPROM block format, and its state: `ok`, `empty`, `bad_magic`, `bad_format`, `bad_crc`, `out_of_range` |
+| `cal.crc`, `cal.written` | 3f2a, 2026-11-06 | stored block CRC and save date; `none` without a stored block |
 | `fw.stall_protect` | 1 | stall guard present; absent in builds without it |
 | `stall.trip_a`, `stall.moving_mps`, `stall.trip_ms` | 10.0, 0.10, 500 | a stall is throttle commanded, speed under `moving_mps` and current over `trip_a`; it trips after `trip_ms` of it |
 | `stall.cooldown_ms` | 2000 | neutral after the command returns to neutral |
@@ -188,6 +191,12 @@ values come from `config/config.h` unless noted.
 | `power.min_mv` | 7412 | lowest bus voltage since boot, at the time of the request; -1 before the first reading |
 | `power.dip_count` | 0 | dips since boot, at the time of the request |
 | `power.last_dip_ms` | 812345 | Teensy uptime at the start of the last dip; -1 for none |
+
+The per-car keys (`pid.ff_fwd_us`, `pid.kv_ff_fwd`, `pid.ff_rev_us`,
+`pid.kv_ff_rev`, `pid.kp`, `pid.kp_boost`, `pid.boost_error_mps`, `pid.ki`,
+`pid.ki_rev`, `pid.max_integral`, `pid.start_rev_from_us`,
+`pid.start_rev_max_us`) report the values in use. The same names are the keys
+of the USB `cal set` command (README "Speed constants").
 
 The `power.min_mv`, `power.dip_count` and `power.last_dip_ms` values are taken
 when the reply is built. A request made right after a reset finds no voltage

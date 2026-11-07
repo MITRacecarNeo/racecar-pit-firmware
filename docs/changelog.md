@@ -35,7 +35,20 @@ All notable changes to this project. Format: Keep a Changelog
   the next counts after 7.3 V (`src/dip_record.*`). 7 host tests
   (`test_dip`). `docs/test-log.md` TL-027.
 
+- Per-car speed constants in the EEPROM (`src/car_constants.*`,
+  `src/speed_store.*`): feedforward, PI gains and reverse start ramp; block
+  with format number and CRC; the fleet values load when it is missing or
+  invalid. USB serial `cal get / set / save / revert / defaults / erase`;
+  changes apply at once and are refused while the car moves.
+  `scripts/car_constants.py` (also `export` / `import` to JSON). Info keys
+  `cal.source`, `cal.format`, `cal.eeprom`, `cal.crc`, `cal.written`; the
+  per-car `pid.*` keys report the values in use. The watchdog timeout is
+  1.5 s while a save runs (`wdt::flashWrite`, `cfg::WATCHDOG::flash_timeout_ms`);
+  a flash sector erase outlasted 100 ms. 18 host tests (`test_constants`),
+  8 pytest cases. `docs/test-log.md` TL-029.
+
 ### Changed
+- Per-car `pid.*` info keys print with 3 decimals (feedforward offsets were 1).
 - Default displays follow the display state logic: the dot matrix shows LOAD
   until the Pi connects, OFF once its commands stop, and is blank while the
   Pi draws nothing; the I / A / M mode glyphs and the boot splash are gone.

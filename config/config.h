@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "car_constants.h"
 #include "dip_record.h"
 #include "display_state.h"
 #include "led_patterns.h"
@@ -257,6 +258,9 @@ namespace cfg
 #else
         constexpr uint32_t timeout_ms = 100;
 #endif
+        // While an EEPROM save runs. A full flash sector is erased with
+        // interrupts off (typical 45 ms, up to 400 ms) and then rewritten.
+        constexpr uint32_t flash_timeout_ms = 1500;
     }
 
     namespace DRIVE_LOOP
@@ -329,6 +333,12 @@ namespace cfg
         // slow for the running feedforward to carry it.
         constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
         constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000, 0.5f, 0.8f};
+
+        // Fleet values, used when the EEPROM holds no valid per-car set
+        // (src/car_constants.h). Field order follows SpeedConstants.
+        constexpr SpeedConstants speed_defaults = {
+            deadband_fwd_us, kv_ff_fwd, deadband_rev_us, kv_ff_rev, kp, kp_boost, err_threshold,
+            ki, ki_rev, max_integral, start_assist_rev.from_us, start_assist_rev.max_us};
     }
 
     namespace STALL_GUARD
