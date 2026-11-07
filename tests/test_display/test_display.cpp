@@ -60,12 +60,12 @@ void test_boot_wait_times_out_to_lost()
   TEST_ASSERT_EQUAL(LinkState::live, linkTick(t, true, 1000 + BOOT_TIMEOUT + 5000, BOOT_TIMEOUT));
 }
 
-void test_boot_wait_shows_load_and_the_gradient()
+void test_boot_wait_shows_the_logo_and_the_loading_bar()
 {
   DisplayInputs in = live();
   in.link = LinkState::boot_wait;
   const DisplayChoice c = chooseDisplay(in, P);
-  assertText("LOAD", c);
+  TEST_ASSERT_EQUAL(MatrixShow::logo, c.matrix);
   TEST_ASSERT_EQUAL(StripShow::loading, c.strip);
 }
 
@@ -79,10 +79,10 @@ void test_lost_shows_off_with_the_strip_dark()
   TEST_ASSERT_EQUAL(StripShow::off, c.strip);
 }
 
-void test_live_defaults_are_blank_matrix_and_battery_meter()
+void test_live_defaults_are_the_logo_and_battery_meter()
 {
   const DisplayChoice c = chooseDisplay(live(), P);
-  TEST_ASSERT_EQUAL(MatrixShow::blank, c.matrix);
+  TEST_ASSERT_EQUAL(MatrixShow::logo, c.matrix);
   TEST_ASSERT_EQUAL(StripShow::battery, c.strip);
 }
 
@@ -102,7 +102,7 @@ void test_stall_words_one_second_each_from_the_trip()
   assertText("WARN", chooseDisplay(tripped(StallState::tripped, 0), P));
   assertText("WARN", chooseDisplay(tripped(StallState::tripped, 999), P));
   assertText("HIGH", chooseDisplay(tripped(StallState::cooldown, 1000), P));
-  assertText("STALL", chooseDisplay(tripped(StallState::cooldown, 2500), P));
+  assertText("CURR", chooseDisplay(tripped(StallState::cooldown, 2500), P));
   assertText("WARN", chooseDisplay(tripped(StallState::tripped, 3000), P));
 }
 
@@ -142,7 +142,7 @@ void test_strip_flashes_orange_for_two_seconds_after_a_trip()
 void test_normal_after_the_flash_is_the_plain_display()
 {
   const DisplayChoice c = chooseDisplay(tripped(StallState::normal, 2000), P);
-  TEST_ASSERT_EQUAL(MatrixShow::blank, c.matrix);
+  TEST_ASSERT_EQUAL(MatrixShow::logo, c.matrix);
   TEST_ASSERT_EQUAL(StripShow::battery, c.strip);
 }
 
@@ -171,9 +171,9 @@ int main()
   RUN_TEST(test_link_waits_for_boot_then_goes_live);
   RUN_TEST(test_link_lost_when_commands_stop_and_back_when_they_resume);
   RUN_TEST(test_boot_wait_times_out_to_lost);
-  RUN_TEST(test_boot_wait_shows_load_and_the_gradient);
+  RUN_TEST(test_boot_wait_shows_the_logo_and_the_loading_bar);
   RUN_TEST(test_lost_shows_off_with_the_strip_dark);
-  RUN_TEST(test_live_defaults_are_blank_matrix_and_battery_meter);
+  RUN_TEST(test_live_defaults_are_the_logo_and_battery_meter);
   RUN_TEST(test_live_shows_pi_content_when_flagged);
   RUN_TEST(test_stall_words_one_second_each_from_the_trip);
   RUN_TEST(test_stall_words_override_pi_content_and_off);

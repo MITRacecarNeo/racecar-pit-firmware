@@ -18,13 +18,13 @@ LinkState linkTick(LinkTracker &t, bool pi_fresh, uint32_t now_ms, uint32_t boot
 
 DisplayChoice chooseDisplay(const DisplayInputs &in, const DisplayParams &p)
 {
-  static const char *const stall_words[] = {"WARN", "HIGH", "STALL"};
+  static const char *const stall_words[] = {"WARN", "HIGH", "CURR"};
 
-  DisplayChoice c = {MatrixShow::blank, nullptr, StripShow::battery};
+  DisplayChoice c = {MatrixShow::logo, nullptr, StripShow::battery};
   switch (in.link)
   {
   case LinkState::boot_wait:
-    c = {MatrixShow::text, "LOAD", StripShow::loading};
+    c = {MatrixShow::logo, nullptr, StripShow::loading};
     break;
   case LinkState::lost:
     c = {MatrixShow::text, "OFF", StripShow::off};

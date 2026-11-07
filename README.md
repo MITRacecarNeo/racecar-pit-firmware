@@ -331,14 +331,15 @@ The Teensy sees the Pi only through its commands.
 
 | Situation | Dot matrix | LED strip |
 | --------- | ---------- | --------- |
-| Power-on, before the first Pi command | LOAD | red bar filling from LED 0 to the last over 60 s |
-| Pi running, nothing drawn | blank | red battery bar from both front ends toward the back |
+| Power-on, before the first Pi command | NEO V2 | orange bar filling from both front ends toward the back over 60 s |
+| Pi running, nothing drawn | NEO V2 | red battery bar from both front ends toward the back |
 | Pi drawing | the Pi's image | the Pi's colors, or the driver-start rainbow |
 | Pi commands stopped (shutdown, brownout, driver restart), or no Pi 180 s after power-on | OFF | dark |
-| Stall tripped or cooling down | WARN, HIGH, STALL, 1 s each | orange flash for 2 s |
+| Stall tripped or cooling down | WARN, HIGH, CURR, 1 s each | orange flash for 2 s |
 | Stall lockout | LOCK | orange flash until it ends |
 
-Dot matrix text uses the narrow font in `src/small_font.h`. Preview any text
+Dot matrix text uses the narrow font in `src/small_font.h`; NEO V2 is a
+fixed bitmap in `src/logo.h` drawn from the same glyphs. Preview any text
 without the display: `python3 scripts/dotmatrix_preview.py OFF --out previews/`.
 
 The battery bar reads state of charge, not volts. A 2S LiPo runs from 8.4 V

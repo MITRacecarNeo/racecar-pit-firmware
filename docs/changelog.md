@@ -17,18 +17,20 @@ All notable changes to this project. Format: Keep a Changelog
   third trip within 60 s gives a 30 s lockout. Applies to Pi and RC
   driving; not in the ESC calibration and raw-PWM builds. Telemetry `EKF`
   carries state, seconds left and trip count; info keys `fw.stall_protect`
-  and `stall.*`. The dot matrix cycles WARN / HIGH / STALL while tripped or
+  and `stall.*`. The dot matrix cycles WARN / HIGH / CURR while tripped or
   cooling down, and the LED strip flashes orange for 2 s after a trip; a
   lockout shows LOCK with the strip flashing until it ends. 13 host tests
   (`test_stall`). `docs/test-log.md` TL-028.
-- Display state logic (`src/display_state.*`): LOAD and a loading strip
+- Display state logic (`src/display_state.*`): NEO V2 and the loading bar
   until the first Pi command, OFF and a dark strip once commands stop,
-  blank matrix and battery meter while the Pi draws nothing; stall words
-  WARN / HIGH / STALL 1 s each and a 2 s orange strip flash. 13 host tests
+  NEO V2 and the battery meter while the Pi draws nothing; stall words
+  WARN / HIGH / CURR 1 s each and a 2 s orange strip flash. 13 host tests
   (`test_display`).
-- LED strip patterns (`src/led_patterns.*`): red loading bar from LED 0 to
-  the last over 60 s after power-on; battery meter unchanged (red, filling
-  from both front ends toward the back). 6 host tests (`test_led`).
+- LED strip patterns (`src/led_patterns.*`): orange loading bar filling from
+  both front ends toward the back over 60 s after power-on; battery meter
+  unchanged (red, filling from both front ends toward the back). 6 host
+  tests (`test_led`).
+- `src/logo.h`: NEO V2 bitmap for the dot matrix, from the narrow font.
 - Info keys `power.min_mv` (lowest bus voltage since boot), `power.dip_count`,
   `power.last_dip_ms` (uptime at the start of the last dip; -1 for none),
   `power.dip_mv` and `power.dip_min_ms`. A dip is below 7.2 V for 100 ms;
@@ -49,9 +51,9 @@ All notable changes to this project. Format: Keep a Changelog
 
 ### Changed
 - Per-car `pid.*` info keys print with 3 decimals (feedforward offsets were 1).
-- Default displays follow the display state logic: the dot matrix shows LOAD
-  until the Pi connects, OFF once its commands stop, and is blank while the
-  Pi draws nothing; the I / A / M mode glyphs and the boot splash are gone.
+- Default displays follow the display state logic: the dot matrix shows NEO V2
+  until the Pi connects and while it draws nothing, and OFF once its commands
+  stop; the I / A / M mode glyphs and the boot splash are gone.
   Dot matrix text uses the narrow font. The LED strip shows the loading
   bar, then the battery meter, and goes dark when the Pi stops.
 - Version 0.9.2.

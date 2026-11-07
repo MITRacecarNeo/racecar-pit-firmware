@@ -64,7 +64,7 @@ def firmware_font():
     return dp.parse_font(dp.DEFAULT_FONT.read_text())
 
 
-@pytest.mark.parametrize("text", ["OFF", "LOAD", "WARN", "HIGH", "STALL", "LOCK"])
+@pytest.mark.parametrize("text", ["OFF", "WARN", "HIGH", "CURR", "LOCK"])
 def test_static_display_words_have_equal_margins(firmware_font, text):
     (frame,) = dp.render(text, firmware_font)
     top, bottom, left, right = dp.margins(frame)
@@ -78,3 +78,18 @@ def test_firmware_glyphs_stay_on_rows_one_to_six(firmware_font):
 
 def test_blank_frame_has_no_margins():
     assert dp.margins([[False] * dp.COLS for _ in range(dp.ROWS)]) is None
+
+
+def test_logo_is_neo_v2_in_the_firmware_font(firmware_font):
+    src = (dp.DEFAULT_FONT.parent / "logo.h").read_text()
+    body = src[src.index("{") + 1 : src.index("}")]
+    logo = [int(v) for v in body.replace("\n", " ").split(",")]
+    expected = (
+        [0]
+        + dp.text_columns("NEO", firmware_font)
+        + [0, 0]
+        + dp.text_columns("V2", firmware_font)
+        + [0]
+    )
+    assert logo == expected
+    assert dp.margins(dp.columns_to_frame(logo)) == (1, 1, 1, 1)

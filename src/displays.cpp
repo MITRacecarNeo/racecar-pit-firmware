@@ -11,6 +11,7 @@
 #include "drive.h"
 #include "esc_cal.h"
 #include "led_patterns.h"
+#include "logo.h"
 #include "profile.h"
 #include "shared.h"
 #include "small_font.h"
@@ -111,6 +112,16 @@ void DotMatrix()
         mx.displayText(c.text, PA_CENTER, 0, 0, PA_PRINT, PA_NO_EFFECT);
         mx.displayReset();
       }
+      else if (c.matrix == MatrixShow::logo)
+      {
+        // Same column mapping as the Pi bitmap above.
+        constexpr uint16_t W = cfg::MAX_7219_DOT_MATRIX::cols;
+        gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::OFF);
+        for (uint8_t r = 0; r < cfg::MAX_7219_DOT_MATRIX::rows; r++)
+          for (uint16_t col = 0; col < W; col++)
+            gfx->setPoint(r, (W - 1) - col, (neo_v2_logo[col] >> r) & 1);
+        gfx->control(MD_MAX72XX::UPDATE, MD_MAX72XX::ON);
+      }
     }
     if (c.matrix == MatrixShow::text)
       mx.displayAnimate();
@@ -155,7 +166,7 @@ void updateLedStrip()
   case StripShow::stall_dark:
     break;
   case StripShow::loading:
-    loadingBar(px, N, now, cfg::RGB_LED_WS2812B::loading_bar_ms, cfg::RGB_LED_WS2812B::bar_red);
+    loadingBar(px, N, now, cfg::RGB_LED_WS2812B::loading_bar_ms, cfg::RGB_LED_WS2812B::loading_orange);
     break;
   case StripShow::battery:
   {

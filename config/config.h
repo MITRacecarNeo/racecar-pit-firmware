@@ -64,10 +64,12 @@ namespace cfg
         constexpr uint16_t num_leds = 84;
         constexpr uint8_t led_pin = 9;
         constexpr uint8_t brightness = 25;
-        constexpr Rgb bar_red = {255, 0, 0};      // battery meter and loading bar
-        constexpr Rgb stall_orange = {255, 40, 0}; // stall flash
-        // Loading bar from LED 0 to the last over this long after power-on,
-        // about the time the Pi takes to start the driver.
+        constexpr Rgb bar_red = {255, 0, 0};          // battery meter
+        constexpr Rgb loading_orange = {255, 40, 0}; // power-on loading bar
+        // The driver's safety-override color (pit_node OVERRIDE_LED_RGB).
+        constexpr Rgb stall_orange = {255, 110, 0}; // stall and lockout flash
+        // Loading bar from both front ends to the back middle over this long
+        // after power-on, about the time the Pi takes to start the driver.
         constexpr uint32_t loading_bar_ms = 60000;
     }
 

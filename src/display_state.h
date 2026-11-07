@@ -7,12 +7,12 @@
 // tests/. The Teensy runs on its own supply, so it sees the Pi only through
 // the command link:
 //
-//   boot_wait  power-on until the first Pi command; LOAD, loading bar
-//   live       Pi commands fresh; Pi content, else blank matrix and battery meter
+//   boot_wait  power-on until the first Pi command; NEO V2, loading bar
+//   live       Pi commands fresh; Pi content, else NEO V2 and battery meter
 //   lost       commands stopped after live (shutdown, brownout, driver
 //              restart), or boot_wait timed out; OFF, strip dark
 //
-// A stall overrides both: WARN, HIGH, STALL on the matrix while tripped or
+// A stall overrides both: WARN, HIGH, CURR on the matrix while tripped or
 // cooling down, and the strip flashes orange for flash_ms after a trip, then
 // shows its usual content. A lockout shows LOCK with the strip flashing
 // until it ends.
@@ -36,6 +36,7 @@ LinkState linkTick(LinkTracker &t, bool pi_fresh, uint32_t now_ms, uint32_t boot
 enum class MatrixShow : uint8_t
 {
   blank,
+  logo, // NEO V2 (src/logo.h)
   pi_bitmap,
   text,
 };
