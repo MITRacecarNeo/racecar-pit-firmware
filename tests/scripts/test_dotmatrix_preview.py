@@ -64,7 +64,7 @@ def firmware_font():
     return dp.parse_font(dp.DEFAULT_FONT.read_text())
 
 
-@pytest.mark.parametrize("text", ["OFF", "LOAD", "WARN", "HIGH", "STALL"])
+@pytest.mark.parametrize("text", ["OFF", "LOAD", "WARN", "HIGH", "STALL", "LOCK"])
 def test_static_display_words_have_equal_margins(firmware_font, text):
     (frame,) = dp.render(text, firmware_font)
     top, bottom, left, right = dp.margins(frame)

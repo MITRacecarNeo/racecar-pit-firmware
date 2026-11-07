@@ -39,12 +39,17 @@ DisplayChoice chooseDisplay(const DisplayInputs &in, const DisplayParams &p)
     break;
   }
 
-  if (in.stall != StallState::normal)
+  if (in.stall == StallState::lockout)
+  {
+    c.matrix = MatrixShow::text;
+    c.text = "LOCK";
+  }
+  else if (in.stall != StallState::normal)
   {
     c.matrix = MatrixShow::text;
     c.text = stall_words[(in.ms_since_trip / p.word_ms) % 3];
   }
-  if (in.tripped_once && in.ms_since_trip < p.flash_ms)
+  if (in.stall == StallState::lockout || (in.tripped_once && in.ms_since_trip < p.flash_ms))
     c.strip = (in.ms_since_trip / p.blink_ms) % 2 == 0 ? StripShow::stall_flash : StripShow::stall_dark;
   return c;
 }

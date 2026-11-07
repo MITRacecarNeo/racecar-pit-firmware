@@ -63,3 +63,16 @@ struct StallOutput
 };
 
 StallOutput stallGuardTick(StallGuard &g, const StallInputs &in, uint32_t now_us, const StallParams &p);
+
+// The guard's output in one 32-bit word, so the drive interrupt can publish it
+// with a single store: bits 0-3 state, 4-15 hundredths of a second left
+// (clamped at 40.95 s), 16-31 trips since boot.
+uint32_t packStallWord(const StallOutput &out);
+
+struct StallWord
+{
+  StallState state;
+  float seconds_left;
+  uint16_t trips;
+};
+StallWord unpackStallWord(uint32_t w);

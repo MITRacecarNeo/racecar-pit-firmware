@@ -45,7 +45,7 @@ Telemetry and info both start with `HeaderPacket` (16 B):
 | `RxReceiver` | u16[8] | raw FlySky pulse widths, us; 0 when absent |
 | `IMU` | f32[9] | accel xyz m/s^2, gyro xyz rad/s, mag xyz uT (LSM9DS1 chip axes) |
 | `Encoder` | f32 | signed ground speed, m/s |
-| `EKF` | f32[3] | reserved, always 0 |
+| `EKF` | f32[3] | stall guard: [0] state (0 normal, 1 tripped, 2 cooldown, 3 lockout), [1] seconds left in the cooldown or lockout, else 0, [2] trips since boot; all 0 in builds without `fw.stall_protect` |
 | `Checksum` | u16 | CRC-16 |
 
 ## Command
@@ -168,6 +168,10 @@ values come from `config/config.h` unless noted.
 | `imu.gyro_range_dps`, `imu.mag_range_gauss` | 500, 8 | gyro and mag full scale |
 | `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |
+| `fw.stall_protect` | 1 | stall guard present; absent in builds without it |
+| `stall.trip_a`, `stall.moving_mps`, `stall.trip_ms` | 10.0, 0.10, 500 | a stall is throttle commanded, speed under `moving_mps` and current over `trip_a`; it trips after `trip_ms` of it |
+| `stall.cooldown_ms` | 2000 | neutral after the command returns to neutral |
+| `stall.lockout_trips`, `stall.lockout_window_ms`, `stall.lockout_ms` | 3, 60000, 30000 | this many trips within the window give a lockout in place of the cooldown |
 | `power.sensor` | INA226 | power sensor |
 | `power.shunt_ohm`, `power.max_current_a` | 0.0020, 40.0 | shunt and current range |
 | `power.avg_samples` | 16 | INA226 hardware averaging |

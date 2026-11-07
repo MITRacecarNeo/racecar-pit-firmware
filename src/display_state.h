@@ -12,9 +12,10 @@
 //   lost       commands stopped after live (shutdown, brownout, driver
 //              restart), or boot_wait timed out; OFF, strip dark
 //
-// A stall overrides both: WARN, HIGH, STALL on the matrix while the guard
-// holds neutral; the strip flashes orange for flash_ms after a trip, then
-// shows its usual content.
+// A stall overrides both: WARN, HIGH, STALL on the matrix while tripped or
+// cooling down, and the strip flashes orange for flash_ms after a trip, then
+// shows its usual content. A lockout shows LOCK with the strip flashing
+// until it ends.
 
 enum class LinkState : uint8_t
 {

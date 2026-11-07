@@ -2,7 +2,7 @@
 #include <MD_MAX72xx.h>
 
 // Narrow capitals for the 8 x 24 dot matrix: 6 rows on rows 1-6, so the top
-// and bottom margins are 1 dot each. Mostly 3 columns wide; C G N O Q S 4,
+// and bottom margins are 1 dot each. Mostly 3 columns wide; C G K N O Q S 4,
 // M and W 5. Codes 32-90 (space to Z); lowercase and others have no glyph.
 // Preview: scripts/dotmatrix_preview.py.
 static MD_MAX72XX::fontType_t small_font[] PROGMEM = {
@@ -50,7 +50,7 @@ static MD_MAX72XX::fontType_t small_font[] PROGMEM = {
     3, 126, 8, 126, // 72 'H'
     3, 66, 126, 66, // 73 'I'
     3, 32, 64, 62, // 74 'J'
-    3, 126, 8, 118, // 75 'K'
+    4, 126, 8, 20, 98, // 75 'K'
     3, 126, 64, 64, // 76 'L'
     5, 126, 4, 8, 4, 126, // 77 'M'
     4, 126, 12, 48, 126, // 78 'N'

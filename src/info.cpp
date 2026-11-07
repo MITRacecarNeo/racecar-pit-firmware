@@ -164,6 +164,20 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
 #else
   w.text("fw.speed_control", "closed_loop");
 #endif
+#if !defined(RCN_ESC_CAL) && !defined(RCN_RAW_PWM)
+  if (STALL_GUARD::enabled)
+  {
+    const StallParams &sp = STALL_GUARD::params;
+    w.integer("fw.stall_protect", 1);
+    w.fixed("stall.trip_a", sp.trip_a, 1);
+    w.fixed("stall.moving_mps", sp.moving_mps, 2);
+    w.integer("stall.trip_ms", (int32_t)(sp.trip_us / 1000));
+    w.integer("stall.cooldown_ms", (int32_t)(sp.cooldown_us / 1000));
+    w.integer("stall.lockout_ms", (int32_t)(sp.lockout_us / 1000));
+    w.integer("stall.lockout_trips", sp.lockout_trips);
+    w.integer("stall.lockout_window_ms", (int32_t)(sp.lockout_window_us / 1000));
+  }
+#endif
 
   w.integer("link.baud", (int32_t)UART::baud_rate);
   w.integer("link.telemetry_hz", UART::tx_freq);

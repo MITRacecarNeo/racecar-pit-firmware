@@ -48,7 +48,10 @@ namespace
     in.matrix_flag = state & cfg::SYS_STATE::dotmatrix_active;
     in.strip_flag = state & cfg::SYS_STATE::led_active;
     in.driver_starting = state & cfg::SYS_STATE::driver_starting;
-    in.stall = StallState::normal;
+    const StallWord stall = unpackStallWord(stall_word);
+    in.stall = stall.state;
+    in.tripped_once = stall.trips > 0;
+    in.ms_since_trip = millis() - stall_trip_ms;
     return {chooseDisplay(in, cfg::DISP::stall_display), state};
   }
 

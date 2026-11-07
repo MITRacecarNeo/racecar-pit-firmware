@@ -4,6 +4,54 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-028 - 2026-11-06
+
+### Setup
+Reference car, stall guard build (`8d9abc9` plus the guard wiring), battery
+7.5 V. Forced stalls on the stand with the wheels up and one rear tire
+blocked; then a floor run, driven by the operator. Logged
+from the Pi: `/battery/current`, `/battery/voltage`, `/encoder/speed` and the
+driver's `/pit/stall` (about 50 rows per second).
+
+### Hypothesis
+With trip at 10 A, 0.1 m/s and 0.5 s, a blocked wheel trips in about 0.5 s,
+in both directions; the third trip within 60 s gives the 30 s lockout; normal
+floor starts do not trip.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| `trip_a` | 10.0 | A |
+| `moving_mps` | 0.10 | m/s |
+| `trip_us` | 500000 | us |
+| Cooldown, lockout | 2, 30 | s |
+| Lockout trips, window | 3, 60 | -, s |
+
+### Observations
+| Trip | Direction | Time over 10 A before trip | Peak current | Current under 5 A after trip | State after release |
+| ---- | --------- | -------------------------- | ------------ | ---------------------------- | ------------------- |
+| 1 | forward | 496 ms | 21.9 A | 74 ms | cooldown 2 s |
+| 2 | forward | 547 ms | 25.0 A | 53 ms | cooldown 2 s |
+| 3 | forward | 542 ms | 23.5 A | 58 ms | lockout 30 s |
+| 4 | reverse | 497 ms | 21.5 A | 63 ms | cooldown 2 s |
+| 5 | reverse | 496 ms | 21.5 A | 65 ms | cooldown 2 s |
+| 6 | reverse | 483 ms | 22.3 A | 48 ms | lockout 30 s |
+
+- Both lockouts ended 30.0 s after the release; each cooldown ended at 2.0 s.
+- Speed read 0 through most of each stall window, with single readings up to
+  0.9 m/s as the rotor rocked; the stall timer counts back down instead of
+  resetting, so these did not stop the trips.
+- Stall currents reached 21 to 25 A, above the old 16.38 A clip (TL-027 range).
+- Floor run, about 47 s: 9 reverse and 18 forward starts, reverse peaks
+  9.5 to 19.3 A, speeds to 1.65 m/s; 0 trips.
+- Current under 5 A includes the INA226 averaging (35 ms) and topic delivery.
+
+### Conclusion
+Supported. Thresholds kept. Log:
+/mnt/nvme/data/stall-tests/stall_2026-11-06_p4.csv.
+
+---
+
 ## TL-027 - 2026-11-06
 
 ### Setup

@@ -103,15 +103,28 @@ void test_stall_words_one_second_each_from_the_trip()
   assertText("WARN", chooseDisplay(tripped(StallState::tripped, 999), P));
   assertText("HIGH", chooseDisplay(tripped(StallState::cooldown, 1000), P));
   assertText("STALL", chooseDisplay(tripped(StallState::cooldown, 2500), P));
-  assertText("WARN", chooseDisplay(tripped(StallState::lockout, 3000), P));
+  assertText("WARN", chooseDisplay(tripped(StallState::tripped, 3000), P));
+}
+
+void test_lockout_shows_lock_and_flashes_until_it_ends()
+{
+  for (uint32_t ms = 0; ms < 32000; ms += 500)
+  {
+    const DisplayChoice c = chooseDisplay(tripped(StallState::lockout, ms), P);
+    assertText("LOCK", c);
+    TEST_ASSERT_EQUAL(StripShow::stall_flash, c.strip); // 500 ms steps land on the lit half
+  }
+  TEST_ASSERT_EQUAL(StripShow::stall_dark, chooseDisplay(tripped(StallState::lockout, 25250), P).strip);
+  assertText("LOCK", chooseDisplay(tripped(StallState::lockout, 25250, LinkState::lost), P));
+  TEST_ASSERT_EQUAL(StripShow::battery, chooseDisplay(tripped(StallState::normal, 32000), P).strip);
 }
 
 void test_stall_words_override_pi_content_and_off()
 {
-  DisplayInputs in = tripped(StallState::lockout, 4000);
+  DisplayInputs in = tripped(StallState::cooldown, 1000);
   in.matrix_flag = true;
   assertText("HIGH", chooseDisplay(in, P));
-  assertText("HIGH", chooseDisplay(tripped(StallState::lockout, 4000, LinkState::lost), P));
+  assertText("HIGH", chooseDisplay(tripped(StallState::cooldown, 1000, LinkState::lost), P));
 }
 
 void test_strip_flashes_orange_for_two_seconds_after_a_trip()
@@ -121,9 +134,9 @@ void test_strip_flashes_orange_for_two_seconds_after_a_trip()
   TEST_ASSERT_EQUAL(StripShow::stall_flash, chooseDisplay(tripped(StallState::cooldown, 1500), P).strip);
   TEST_ASSERT_EQUAL(StripShow::stall_dark, chooseDisplay(tripped(StallState::cooldown, 1999), P).strip);
   // After the flash the strip goes back to what the link state shows.
-  TEST_ASSERT_EQUAL(StripShow::battery, chooseDisplay(tripped(StallState::lockout, 2000), P).strip);
+  TEST_ASSERT_EQUAL(StripShow::battery, chooseDisplay(tripped(StallState::cooldown, 2000), P).strip);
   TEST_ASSERT_EQUAL(StripShow::off,
-                    chooseDisplay(tripped(StallState::lockout, 2000, LinkState::lost), P).strip);
+                    chooseDisplay(tripped(StallState::cooldown, 2000, LinkState::lost), P).strip);
 }
 
 void test_normal_after_the_flash_is_the_plain_display()
@@ -164,6 +177,7 @@ int main()
   RUN_TEST(test_live_shows_pi_content_when_flagged);
   RUN_TEST(test_stall_words_one_second_each_from_the_trip);
   RUN_TEST(test_stall_words_override_pi_content_and_off);
+  RUN_TEST(test_lockout_shows_lock_and_flashes_until_it_ends);
   RUN_TEST(test_strip_flashes_orange_for_two_seconds_after_a_trip);
   RUN_TEST(test_normal_after_the_flash_is_the_plain_display);
   RUN_TEST(test_rx_time_expires_before_the_clock_wraps);

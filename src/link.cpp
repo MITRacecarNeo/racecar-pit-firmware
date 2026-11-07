@@ -40,6 +40,10 @@ namespace
     // Amps packed as mA so sub-amp resolution survives the uint16.
     pkt.VoltAndCurr[1] = (uint16_t)(power_last.amps < 0.0f ? 0.0f : power_last.amps * 1000.0f);
     pkt.Encoder = measured_speed_mps;
+    const StallWord stall = unpackStallWord(stall_word);
+    pkt.EKF[0] = (float)(uint8_t)stall.state;
+    pkt.EKF[1] = stall.seconds_left;
+    pkt.EKF[2] = (float)stall.trips;
     pkt.Timestamp = (int32_t)micros();
     // Checksum the exact bytes going on the wire, magic included.
     pkt.Checksum = crc16_ccitt((const uint8_t *)&pkt, sizeof(TXPacket) - 2);

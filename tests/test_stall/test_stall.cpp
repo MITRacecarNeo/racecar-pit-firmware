@@ -163,6 +163,25 @@ void test_config_params_match_the_approved_states()
   TEST_ASSERT_TRUE(c.lockout_trips <= StallGuard::max_history);
 }
 
+void test_stall_word_round_trip()
+{
+  const StallOutput out = {StallState::lockout, true, false, 29.994f, 1234};
+  const StallWord w = unpackStallWord(packStallWord(out));
+  TEST_ASSERT_EQUAL(StallState::lockout, w.state);
+  TEST_ASSERT_FLOAT_WITHIN(0.006f, 29.99f, w.seconds_left);
+  TEST_ASSERT_EQUAL_UINT16(1234, w.trips);
+}
+
+void test_stall_word_clamps_the_countdown()
+{
+  const StallOutput out = {StallState::cooldown, true, false, 99.0f, 65535};
+  const StallWord w = unpackStallWord(packStallWord(out));
+  TEST_ASSERT_EQUAL(StallState::cooldown, w.state);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 40.95f, w.seconds_left);
+  TEST_ASSERT_EQUAL_UINT16(65535, w.trips);
+  TEST_ASSERT_EQUAL_UINT32(0, packStallWord({StallState::normal, false, false, 0.0f, 0}));
+}
+
 int main()
 {
   UNITY_BEGIN();
@@ -177,5 +196,7 @@ int main()
   RUN_TEST(test_trips_spread_past_the_window_cool_down);
   RUN_TEST(test_microsecond_clock_wrap);
   RUN_TEST(test_config_params_match_the_approved_states);
+  RUN_TEST(test_stall_word_round_trip);
+  RUN_TEST(test_stall_word_clamps_the_countdown);
   return UNITY_END();
 }

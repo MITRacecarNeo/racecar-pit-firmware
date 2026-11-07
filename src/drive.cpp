@@ -249,6 +249,8 @@ namespace
   // Last values that read cleanly, used when a write is in progress.
   RcChannels rc_last = {};
   DriveCommand cmd_last = {0.0f, 0.0f};
+  PowerSample power_last = {0.0f, 0.0f};
+  StallGuard stall_guard;
 
   volatile uint16_t esc_cal_pwm_us = cfg::ESC_10BL60_G2::speed_pwm_neutral;
 
@@ -368,6 +370,29 @@ namespace
       throt_out = rc_active ? rc_throt : cfg::ESC_10BL60_G2::speed_pwm_neutral;
       resetSpeedLoop();
     }
+
+#if !defined(RCN_ESC_CAL) && !defined(RCN_RAW_PWM)
+    if (cfg::STALL_GUARD::enabled)
+    {
+      // Throttle only: a steering-only stick move is not a command to the motor.
+      const bool rc_throttle =
+          rc_active && abs((int)rc_throt - (int)cfg::ESC_10BL60_G2::speed_pwm_neutral) >
+                           cfg::AUTO_DRIVE::throt_override_band;
+      const bool command_active = rc_throttle || (pi_drive && fabsf(pi_motor) > db);
+      power_sample.tryRead(power_last);
+      const StallOutput stall =
+          stallGuardTick(stall_guard, {power_last.amps, measured_mps, command_active}, now, cfg::STALL_GUARD::params);
+      if (stall.tripped_now)
+        stall_trip_ms = millis();
+      stall_word = packStallWord(stall);
+      if (stall.force_neutral)
+      {
+        throt_out = cfg::ESC_10BL60_G2::speed_pwm_neutral;
+        target_mps = 0.0f;
+        resetSpeedLoop();
+      }
+    }
+#endif
 
 #ifdef RCN_ESC_CAL
     // Calibration build: no driving; the ESC sees only the held step.

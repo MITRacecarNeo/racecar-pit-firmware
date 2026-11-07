@@ -230,6 +230,19 @@ static void test_payload_reports_power_range_and_dips(void)
     TEST_ASSERT_EQUAL_STRING("123456", valueOf("power.last_dip_ms"));
 }
 
+static void test_payload_reports_stall_protection(void)
+{
+    buildPayload();
+    TEST_ASSERT_EQUAL_STRING("1", valueOf("fw.stall_protect"));
+    TEST_ASSERT_EQUAL_STRING("10.0", valueOf("stall.trip_a"));
+    TEST_ASSERT_EQUAL_STRING("0.10", valueOf("stall.moving_mps"));
+    TEST_ASSERT_EQUAL_STRING("500", valueOf("stall.trip_ms"));
+    TEST_ASSERT_EQUAL_STRING("2000", valueOf("stall.cooldown_ms"));
+    TEST_ASSERT_EQUAL_STRING("30000", valueOf("stall.lockout_ms"));
+    TEST_ASSERT_EQUAL_STRING("3", valueOf("stall.lockout_trips"));
+    TEST_ASSERT_EQUAL_STRING("60000", valueOf("stall.lockout_window_ms"));
+}
+
 // ------------------------------ chunks ---------------------------- //
 
 static void test_chunk_count(void)
@@ -323,5 +336,6 @@ int main(int, char **)
     RUN_TEST(test_packet_rejects_bad_index_and_small_buffer);
     RUN_TEST(test_slot_fits_on_the_wire);
     RUN_TEST(test_payload_reports_power_range_and_dips);
+    RUN_TEST(test_payload_reports_stall_protection);
     return UNITY_END();
 }

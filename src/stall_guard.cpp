@@ -93,3 +93,17 @@ StallOutput stallGuardTick(StallGuard &g, const StallInputs &in, uint32_t now_us
   out.trips = g.trips;
   return out;
 }
+
+uint32_t packStallWord(const StallOutput &out)
+{
+  float c = out.seconds_left * 100.0f + 0.5f;
+  if (c < 0.0f)
+    c = 0.0f;
+  const uint32_t centis = c > 4095.0f ? 4095u : (uint32_t)c;
+  return ((uint32_t)out.state & 0xFu) | (centis << 4) | ((uint32_t)out.trips << 16);
+}
+
+StallWord unpackStallWord(uint32_t w)
+{
+  return {(StallState)(w & 0xFu), (float)((w >> 4) & 0xFFFu) * 0.01f, (uint16_t)(w >> 16)};
+}

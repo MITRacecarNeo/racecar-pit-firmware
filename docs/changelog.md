@@ -14,8 +14,13 @@ All notable changes to this project. Format: Keep a Changelog
 - Stall guard logic (`src/stall_guard.*`, `cfg::STALL_GUARD`): throttle
   commanded, wheels below 0.1 m/s and battery current above 10 A for 0.5 s
   trips to neutral until the command is neutral, then a 2 s cooldown; the
-  third trip within 60 s gives a 30 s lockout. Not yet connected to the
-  drive output. 11 host tests (`test_stall`).
+  third trip within 60 s gives a 30 s lockout. Applies to Pi and RC
+  driving; not in the ESC calibration and raw-PWM builds. Telemetry `EKF`
+  carries state, seconds left and trip count; info keys `fw.stall_protect`
+  and `stall.*`. The dot matrix cycles WARN / HIGH / STALL while tripped or
+  cooling down, and the LED strip flashes orange for 2 s after a trip; a
+  lockout shows LOCK with the strip flashing until it ends. 13 host tests
+  (`test_stall`). `docs/test-log.md` TL-028.
 - Display state logic (`src/display_state.*`): LOAD and a loading strip
   until the first Pi command, OFF and a dark strip once commands stop,
   blank matrix and battery meter while the Pi draws nothing; stall words
