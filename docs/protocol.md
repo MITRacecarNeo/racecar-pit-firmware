@@ -45,7 +45,7 @@ Telemetry and info both start with `HeaderPacket` (16 B):
 | `RxReceiver` | u16[8] | raw FlySky pulse widths, us; 0 when absent |
 | `IMU` | f32[9] | accel xyz m/s^2, gyro xyz rad/s, mag xyz uT (LSM9DS1 chip axes) |
 | `Encoder` | f32 | signed ground speed, m/s |
-| `EKF` | f32[3] | reserved, always 0 |
+| `EKF` | f32[3] | stall guard: [0] state (0 normal, 1 tripped, 2 cooldown, 3 lockout), [1] seconds left in the cooldown or lockout, else 0, [2] trips since boot; all 0 in builds without `fw.stall_protect` |
 | `Checksum` | u16 | CRC-16 |
 
 ## Command
@@ -168,10 +168,18 @@ values come from `config/config.h` unless noted.
 | `imu.gyro_range_dps`, `imu.mag_range_gauss` | 500, 8 | gyro and mag full scale |
 | `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |
+| `cal.source` | builtin | where the per-car `pid.*` values in use came from: `eeprom`, `builtin`, or either with `_modified` after an unsaved `cal set` |
+| `cal.format`, `cal.eeprom` | 1, empty | EEPROM block format, and its state: `ok`, `empty`, `bad_magic`, `bad_format`, `bad_crc`, `out_of_range` |
+| `cal.crc`, `cal.written` | 3f2a, 2026-11-06 | stored block CRC and save date; `none` without a stored block |
+| `fw.stall_protect` | 1 | stall guard present; absent in builds without it |
+| `stall.trip_a`, `stall.moving_mps`, `stall.trip_ms` | 10.0, 0.10, 500 | a stall is throttle commanded, speed under `moving_mps` and current over `trip_a`; it trips after `trip_ms` of it |
+| `stall.cooldown_ms` | 2000 | neutral after the command returns to neutral |
+| `stall.lockout_trips`, `stall.lockout_window_ms`, `stall.lockout_ms` | 3, 60000, 30000 | this many trips within the window give a lockout in place of the cooldown |
 | `power.sensor` | INA226 | power sensor |
-| `power.shunt_ohm`, `power.max_current_a` | 0.0020, 8.0 | shunt and current range |
+| `power.shunt_ohm`, `power.max_current_a` | 0.0020, 40.0 | shunt and current range |
 | `power.avg_samples` | 16 | INA226 hardware averaging |
 | `power.poll_ms` | 10 | INA226 read period |
+| `power.dip_mv`, `power.dip_min_ms` | 7200, 100 | a dip is the bus voltage below `dip_mv` for `dip_min_ms`; the next counts after 7300 mV |
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
 | `i2c.clock_hz` | 400000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |
@@ -180,6 +188,19 @@ values come from `config/config.h` unless noted.
 | `status.watchdog` | armed | `starting` until every context has run once after boot; `off` when disabled |
 | `status.last_reset` | watchdog | cause of the last boot: `watchdog`, `software`, `reset`, or `unknown` |
 | `status.reset_flags` | 128 | `SRC_SRSR` at boot (bit 7 watchdog 3, bit 1 software or lockup, bit 0 reset pin) |
+| `power.min_mv` | 7412 | lowest bus voltage since boot, at the time of the request; -1 before the first reading |
+| `power.dip_count` | 0 | dips since boot, at the time of the request |
+| `power.last_dip_ms` | 812345 | Teensy uptime at the start of the last dip; -1 for none |
+
+The per-car keys (`pid.ff_fwd_us`, `pid.kv_ff_fwd`, `pid.ff_rev_us`,
+`pid.kv_ff_rev`, `pid.kp`, `pid.kp_boost`, `pid.boost_error_mps`, `pid.ki`,
+`pid.ki_rev`, `pid.max_integral`, `pid.start_rev_from_us`,
+`pid.start_rev_max_us`) report the values in use. The same names are the keys
+of the USB `cal set` command (README "Speed constants").
+
+The `power.min_mv`, `power.dip_count` and `power.last_dip_ms` values are taken
+when the reply is built. A request made right after a reset finds no voltage
+reading yet; request again for current values.
 
 ## Compatibility
 

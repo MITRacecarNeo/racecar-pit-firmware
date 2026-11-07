@@ -5,6 +5,73 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-06
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged; telemetry `EKF[0..2]` now carry the stall guard state, and the
+info reply adds keys. The per-car speed constants default to the 0.9.1 fleet
+values, so no car needs a refit.
+
+### Added
+- `src/small_font.h`: narrow capitals for the 8 x 24 dot matrix, 6 rows with
+  a 1-dot margin above and below.
+- `scripts/dotmatrix_preview.py`: renders dot matrix text as PNG (or GIF when
+  it scrolls) from the firmware font and prints its margins, for checking
+  text without the display connected. Six host tests plus margin checks.
+- Stall guard logic (`src/stall_guard.*`, `cfg::STALL_GUARD`): throttle
+  commanded, wheels below 0.1 m/s and battery current above 10 A for 0.5 s
+  trips to neutral until the command is neutral, then a 2 s cooldown; the
+  third trip within 60 s gives a 30 s lockout. Applies to Pi and RC
+  driving; not in the ESC calibration and raw-PWM builds. Telemetry `EKF`
+  carries state, seconds left and trip count; info keys `fw.stall_protect`
+  and `stall.*`. The dot matrix cycles WARN / HIGH / CURR while tripped or
+  cooling down, and the LED strip flashes orange for 2 s after a trip; a
+  lockout shows LOCK with the strip flashing until it ends. 13 host tests
+  (`test_stall`). `docs/test-log.md` TL-028.
+- Display state logic (`src/display_state.*`): NEO V2 and the loading bar
+  until the first Pi command, OFF and a dark strip once commands stop,
+  NEO V2 and the battery meter while the Pi draws nothing; stall words
+  WARN / HIGH / CURR 1 s each and a 2 s orange strip flash. 13 host tests
+  (`test_display`).
+- LED strip patterns (`src/led_patterns.*`): orange loading bar filling from
+  both front ends toward the back over 60 s after power-on; battery meter
+  unchanged (red, filling from both front ends toward the back). 6 host
+  tests (`test_led`).
+- `src/logo.h`: NEO V2 bitmap for the dot matrix, from the narrow font.
+- Info keys `power.min_mv` (lowest bus voltage since boot), `power.dip_count`,
+  `power.last_dip_ms` (uptime at the start of the last dip; -1 for none),
+  `power.dip_mv` and `power.dip_min_ms`. A dip is below 7.2 V for 100 ms;
+  the next counts after 7.3 V (`src/dip_record.*`). 7 host tests
+  (`test_dip`). `docs/test-log.md` TL-027.
+
+- Per-car speed constants in the EEPROM (`src/car_constants.*`,
+  `src/speed_store.*`): feedforward, PI gains and reverse start ramp; block
+  with format number and CRC; the fleet values load when it is missing or
+  invalid. USB serial `cal get / set / save / revert / defaults / erase`;
+  changes apply at once and are refused while the car moves.
+  `scripts/car_constants.py` (also `export` / `import` to JSON). Info keys
+  `cal.source`, `cal.format`, `cal.eeprom`, `cal.crc`, `cal.written`; the
+  per-car `pid.*` keys report the values in use. The watchdog timeout is
+  1.5 s while a save runs (`wdt::flashWrite`, `cfg::WATCHDOG::flash_timeout_ms`);
+  a flash sector erase outlasted 100 ms. 18 host tests (`test_constants`),
+  8 pytest cases. `docs/test-log.md` TL-029.
+
+### Changed
+- Per-car `pid.*` info keys print with 3 decimals (feedforward offsets were 1).
+- Default displays follow the display state logic: the dot matrix shows NEO V2
+  until the Pi connects and while it draws nothing, and OFF once its commands
+  stop; the I / A / M mode glyphs and the boot splash are gone.
+  Dot matrix text uses the narrow font. The LED strip shows the loading
+  bar, then the battery meter, and goes dark when the Pi stops.
+- Version 0.9.2.
+- INA226 range 40 A (was 8 A, clipping at 16.38 A); current LSB 1.22 mA (was
+  0.5 mA). `power.max_current_a=40.0`. Telemetry current stays u16 mA.
+
+### Fixed
+- A Pi command timestamp older than 60 s is cleared, so the 71.6 min wrap of
+  the microsecond clock can no longer make a long-gone Pi command look fresh
+  for up to 1 s.
+
 ## [0.9.1] - 2026-11-02
 
 Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are

@@ -17,6 +17,9 @@ bool piCommandFresh(uint32_t timeout_ms)
 Seqlock<RcChannels> rc_channels;
 
 Seqlock<PowerSample> power_sample;
+Seqlock<DipSummary> dip_summary;
+volatile uint32_t stall_word = 0;
+volatile uint32_t stall_trip_ms = 0;
 
 Seqlock<ImuSample> imu_sample;
 

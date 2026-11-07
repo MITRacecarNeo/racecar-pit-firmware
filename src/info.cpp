@@ -164,6 +164,20 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
 #else
   w.text("fw.speed_control", "closed_loop");
 #endif
+#if !defined(RCN_ESC_CAL) && !defined(RCN_RAW_PWM)
+  if (STALL_GUARD::enabled)
+  {
+    const StallParams &sp = STALL_GUARD::params;
+    w.integer("fw.stall_protect", 1);
+    w.fixed("stall.trip_a", sp.trip_a, 1);
+    w.fixed("stall.moving_mps", sp.moving_mps, 2);
+    w.integer("stall.trip_ms", (int32_t)(sp.trip_us / 1000));
+    w.integer("stall.cooldown_ms", (int32_t)(sp.cooldown_us / 1000));
+    w.integer("stall.lockout_ms", (int32_t)(sp.lockout_us / 1000));
+    w.integer("stall.lockout_trips", sp.lockout_trips);
+    w.integer("stall.lockout_window_ms", (int32_t)(sp.lockout_window_us / 1000));
+  }
+#endif
 
   w.integer("link.baud", (int32_t)UART::baud_rate);
   w.integer("link.telemetry_hz", UART::tx_freq);
@@ -185,23 +199,17 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("speed.slow_mps", PID_CTRL::slow_speed_mps, 3);
   w.fixed("speed.deadband", ESC_10BL60_G2::cmd_deadband, 3);
 
-  w.fixed("pid.kp", PID_CTRL::kp, 3);
-  w.fixed("pid.ki", PID_CTRL::ki, 3);
-  w.fixed("pid.ki_rev", PID_CTRL::ki_rev, 3);
+  // Per-car values as loaded (EEPROM or built-in), then the fleet-wide rest.
+  const ConstantsInfo ci = status.constants.valid
+                               ? status.constants
+                               : ConstantsInfo{true, PID_CTRL::speed_defaults, "builtin", 0, 0, BlockStatus::empty};
+  writeCalKeys(w, ci);
+  writeConstantsKeys(w, ci.live);
   w.fixed("pid.kd", PID_CTRL::kd, 3);
-  w.fixed("pid.max_integral", PID_CTRL::max_integral, 3);
-  w.fixed("pid.kp_boost", PID_CTRL::kp_boost, 3);
-  w.fixed("pid.boost_error_mps", PID_CTRL::err_threshold, 3);
-  w.fixed("pid.ff_fwd_us", PID_CTRL::deadband_fwd_us, 1);
-  w.fixed("pid.ff_rev_us", PID_CTRL::deadband_rev_us, 1);
-  w.fixed("pid.kv_ff_fwd", PID_CTRL::kv_ff_fwd, 3);
-  w.fixed("pid.kv_ff_rev", PID_CTRL::kv_ff_rev, 3);
   w.integer("pid.start_confirm_intervals", PID_CTRL::start_confirm_intervals);
   w.integer("pid.start_confirm_ms", (int32_t)(PID_CTRL::start_confirm_us / 1000));
   w.fixed("pid.start_fwd_from_us", PID_CTRL::start_assist_fwd.from_us, 1);
   w.fixed("pid.start_fwd_max_us", PID_CTRL::start_assist_fwd.max_us, 1);
-  w.fixed("pid.start_rev_from_us", PID_CTRL::start_assist_rev.from_us, 1);
-  w.fixed("pid.start_rev_max_us", PID_CTRL::start_assist_rev.max_us, 1);
   w.fixed("pid.start_rev_ramp_us_per_s", PID_CTRL::start_assist_rev.ramp_us_per_s, 1);
   w.integer("pid.start_rev_timeout_ms", (int32_t)(PID_CTRL::start_assist_rev.timeout_us / 1000));
   w.integer("pid.start_rev_rest_ms", (int32_t)(PID_CTRL::start_assist_rev.rest_us / 1000));
@@ -253,6 +261,8 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("power.max_current_a", INA226_SENSOR::max_curr_expected, 1);
   w.integer("power.avg_samples", ina226_avg_samples[INA226_SENSOR::avg_set]);
   w.integer("power.poll_ms", INA226_SENSOR::poll_ms);
+  w.integer("power.dip_mv", (int32_t)(INA226_SENSOR::dip.dip_v * 1000.0f + 0.5f));
+  w.integer("power.dip_min_ms", (int32_t)INA226_SENSOR::dip.min_ms);
   w.integer("battery.cells", 2);
   w.integer("battery.empty_mv", batt_empty_mv);
   w.integer("battery.full_mv", batt_full_mv);
@@ -268,6 +278,9 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.text("status.watchdog", !WATCHDOG::enabled ? "off" : status.watchdog_armed ? "armed" : "starting");
   w.text("status.last_reset", status.last_reset ? status.last_reset : "unknown");
   w.integer("status.reset_flags", (int32_t)status.reset_flags);
+  w.integer("power.min_mv", status.dips.any_reading ? (int32_t)(status.dips.min_v * 1000.0f + 0.5f) : -1);
+  w.integer("power.dip_count", status.dips.count);
+  w.integer("power.last_dip_ms", status.dips.count ? (int32_t)status.dips.last_dip_ms : -1);
 
   return w.length();
 }

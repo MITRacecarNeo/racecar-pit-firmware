@@ -12,6 +12,7 @@
 #include "profile.h"
 #include "watchdog.h"
 #include "sensors.h"
+#include "speed_store.h"
 
 void setup()
 {
@@ -29,6 +30,7 @@ void setup()
   SPI.begin();
 
   initHallEncoder();
+  loadSpeedConstants();
   startDriveControl();
   startTelemetry();
 
@@ -79,6 +81,8 @@ void loop()
 {
 #ifdef RCN_ESC_CAL
   serviceEscCal();
+#elif !defined(RCN_WDT_TEST)
+  serviceSpeedConstants();
 #endif
 #ifdef RCN_WDT_TEST
   // Test build: a character on USB serial stops one context (t telemetry

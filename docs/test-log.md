@@ -4,6 +4,171 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-030 - 2026-11-06
+
+### Setup
+Release regression on the reference car, clean build `v0.9.2.8-pcb`
+(`d504479`), fleet speed constants (`cal.source=builtin`), battery 7.5 to
+7.6 V. Floor runs: Pi publishes `/drive` while RB is held, one command per try
+from standstill (`pwm_sweep.py setpoint`), lidar stops on.
+
+### Hypothesis
+The release build keeps the TL-026 speed loop, the 200 Hz link, and every
+display state; normal starts do not approach the stall guard.
+
+### Observations
+| Check | Result |
+| ----- | ------ |
+| Telemetry | 200.0 Hz on every topic, stamp gaps median 5.00 ms, max 5.00 ms |
+| Displays | NEO V2 at power-on and idle, OFF on a driver restart, WARN / HIGH / CURR and LOCK on stall trips; checked by the operator |
+| Stall trips | TL-028 |
+
+| Target | Try | Start (0.3 s of motion) | Hold speed, last 1 s | Peak current | Longest above 10 A |
+| ------ | --- | ----------------------- | -------------------- | ------------ | ------------------ |
+| 0.51 m/s reverse | 1 | 0.46 s | 0.46 m/s | 16.7 A | 64 ms |
+| | 2 | 0.42 s | 0.56 m/s | 13.1 A | 24 ms |
+| | 3 | 0.40 s | 0.56 m/s | 8.6 A | 0 ms |
+| 0.75 m/s reverse | 1 | 0.31 s | 0.755 m/s | 18.6 A | 105 ms |
+| | 2 | 0.23 s | 0.825 m/s | 16.2 A | - |
+| | 3 | 0.28 s | 0.745 m/s | 18.3 A | - |
+
+- Hold speeds are within 0.08 m/s of the target (limit 0.15).
+- Starts at 0.51 m/s take 0.40 to 0.46 s, inside the 0.20 to 0.55 s of the
+  same constants in TL-026, above the 0.3 s target; the battery was 7.53 V.
+- Normal starts stay above 10 A for at most 105 ms against the 500 ms trip.
+
+### Conclusion
+Supported, with the slow 0.51 m/s reverse starts carried over from v0.9.1.
+Logs: /mnt/nvme/data/parity-reverse/sweeps/sweep_20261106_2146*.csv,
+sweep_20261106_214720.csv.
+
+---
+
+## TL-029 - 2026-11-06
+
+### Setup
+Reference car, stationary, teleop running. Per-car constants build over USB
+serial with `scripts/car_constants.py`; soft reboots with
+`teensy_loader_cli -s -b` (no flash). Reset cause and restarts from the
+firmware info and the pit_node log.
+
+### Hypothesis
+Saved constants load at boot, an erased block falls back to the fleet
+values, and saves do not reset the board.
+
+### Method
+1. `get` on an empty EEPROM; `set pid.ff_rev_us=95`; `set pid.kp=999`; `save`;
+   soft reboot; `get`.
+2. Stress: alternate `pid.ff_rev_us` 95 and 96 with a `save` after each,
+   2800 saves on the first build (700, then 2100) and 2100 on the fixed build.
+3. `erase`, soft reboot, `get`.
+
+### Observations
+| Step | Result |
+| ---- | ------ |
+| Empty EEPROM | `cal.source=builtin`, `cal.eeprom=empty`, `pid.ff_rev_us=94.000` |
+| `set pid.kp=999` | refused, `bad value pid.kp` |
+| Save, reboot | `cal.source=eeprom`, `cal.crc=4f7c`, `cal.written=2026-11-06`, `pid.ff_rev_us=95.000` |
+| Stress, 100 ms watchdog throughout | 3 board resets in 2800 saves, cause `watchdog`; block still `ok` after each |
+| Stress, watchdog 1.5 s during a save | 0 resets in 2100 saves; 3 saves over 40 ms (sector erase), longest 84.9 ms; median 25.5 ms |
+| Erase, reboot | `cal.source=builtin`, `cal.eeprom=empty` |
+
+- Save times are measured on the Pi from command to reply.
+- About one save in 700 fills a flash sector; the erase and rewrite then
+  hold the loop past the 100 ms watchdog.
+
+### Conclusion
+Supported after the fix: `wdt::flashWrite` sets the watchdog to 1.5 s for the
+duration of a save. The car was left on the fleet values.
+
+---
+
+## TL-028 - 2026-11-06
+
+### Setup
+Reference car, stall guard build (`8d9abc9` plus the guard wiring), battery
+7.5 V. Forced stalls on the stand with the wheels up and one rear tire
+blocked; then a floor run, driven by the operator. Logged
+from the Pi: `/battery/current`, `/battery/voltage`, `/encoder/speed` and the
+driver's `/pit/stall` (about 50 rows per second).
+
+### Hypothesis
+With trip at 10 A, 0.1 m/s and 0.5 s, a blocked wheel trips in about 0.5 s,
+in both directions; the third trip within 60 s gives the 30 s lockout; normal
+floor starts do not trip.
+
+### Parameters
+| Name | Value | Unit |
+| ---- | ----- | ---- |
+| `trip_a` | 10.0 | A |
+| `moving_mps` | 0.10 | m/s |
+| `trip_us` | 500000 | us |
+| Cooldown, lockout | 2, 30 | s |
+| Lockout trips, window | 3, 60 | -, s |
+
+### Observations
+| Trip | Direction | Time over 10 A before trip | Peak current | Current under 5 A after trip | State after release |
+| ---- | --------- | -------------------------- | ------------ | ---------------------------- | ------------------- |
+| 1 | forward | 496 ms | 21.9 A | 74 ms | cooldown 2 s |
+| 2 | forward | 547 ms | 25.0 A | 53 ms | cooldown 2 s |
+| 3 | forward | 542 ms | 23.5 A | 58 ms | lockout 30 s |
+| 4 | reverse | 497 ms | 21.5 A | 63 ms | cooldown 2 s |
+| 5 | reverse | 496 ms | 21.5 A | 65 ms | cooldown 2 s |
+| 6 | reverse | 483 ms | 22.3 A | 48 ms | lockout 30 s |
+
+- Both lockouts ended 30.0 s after the release; each cooldown ended at 2.0 s.
+- Speed read 0 through most of each stall window, with single readings up to
+  0.9 m/s as the rotor rocked; the stall timer counts back down instead of
+  resetting, so these did not stop the trips.
+- Stall currents reached 21 to 25 A, above the old 16.38 A clip (TL-027 range).
+- Floor run, about 47 s: 9 reverse and 18 forward starts, reverse peaks
+  9.5 to 19.3 A, speeds to 1.65 m/s; 0 trips.
+- Current under 5 A includes the INA226 averaging (35 ms) and topic delivery.
+
+### Conclusion
+Supported. Thresholds kept. Log:
+/mnt/nvme/data/stall-tests/stall_2026-11-06_p4.csv.
+
+---
+
+## TL-027 - 2026-11-06
+
+### Setup
+Reference car on the stand, Pi running teleop with lidar and IMU fusion,
+wheels still. Before: `v0.9.2.4-pcb` (INA226 range 8 A, 0.5 mA LSB). After:
+the same tree with the 40 A range (1.22 mA LSB, unrounded) and the dip
+record. `/battery/current` and `/battery/voltage` sampled from the Pi.
+
+### Hypothesis
+The 40 A range keeps the idle current and voltage readings within their
+normal spread, with no offset.
+
+### Method
+Mean, standard deviation and range of each topic over 20 s before and 25 s
+after the flash, at about 200 samples per second.
+
+### Observations
+| Name | Before | After | Unit |
+| ---- | ------ | ----- | ---- |
+| Current mean | 1.964 | 1.926 | A |
+| Current sd | 0.075 | 0.037 | A |
+| Current min to max | 1.872 to 2.252 | 1.867 to 2.242 | A |
+| Voltage mean | 7.832 | 7.825 | V |
+| Voltage sd | 0.0019 | 0.0016 | V |
+| Info `power.max_current_a` | 8.0 | 40.0 | A |
+
+- The 0.038 A difference in means is inside one standard deviation of the
+  before run; idle load varies with the Pi.
+- `power.min_mv` and `power.last_dip_ms` read -1 in the info latched at
+  startup: the driver requests it within about 1 s of a reset, before the
+  first voltage sample. A later request reports current values.
+
+### Conclusion
+Supported. No offset or scale change at idle; current above 16.38 A is
+checked during the stall tests.
+
+---
+
 ## TL-026 - 2026-11-02
 
 ### Setup

@@ -107,7 +107,7 @@ static void test_payload_starts_with_schema_and_version(void)
 {
     buildPayload();
     TEST_ASSERT_EQUAL_INT(0, strncmp(payload, "info=1\n", 7));
-    TEST_ASSERT_EQUAL_STRING("0.9.1", valueOf("fw.version"));
+    TEST_ASSERT_EQUAL_STRING("0.9.2", valueOf("fw.version"));
     TEST_ASSERT_EQUAL_STRING("unknown", valueOf("fw.git"));
     TEST_ASSERT_EQUAL_STRING("dev", valueOf("fw.label"));
     TEST_ASSERT_EQUAL_STRING("0", valueOf("fw.profile"));
@@ -212,6 +212,57 @@ static void test_payload_without_imu_reports_zero_rates(void)
     TEST_ASSERT_EQUAL_STRING("missing", valueOf("status.imu"));
 }
 
+static void test_payload_reports_power_range_and_dips(void)
+{
+    InfoStatus status = {true, true, "reset", 1, true, Lsm9ds1Registers{}};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("40.0", valueOf("power.max_current_a"));
+    TEST_ASSERT_EQUAL_STRING("7200", valueOf("power.dip_mv"));
+    TEST_ASSERT_EQUAL_STRING("100", valueOf("power.dip_min_ms"));
+    TEST_ASSERT_EQUAL_STRING("-1", valueOf("power.min_mv"));
+    TEST_ASSERT_EQUAL_STRING("0", valueOf("power.dip_count"));
+    TEST_ASSERT_EQUAL_STRING("-1", valueOf("power.last_dip_ms"));
+
+    status.dips = {true, 7.1234f, 3, 123456};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("7123", valueOf("power.min_mv"));
+    TEST_ASSERT_EQUAL_STRING("3", valueOf("power.dip_count"));
+    TEST_ASSERT_EQUAL_STRING("123456", valueOf("power.last_dip_ms"));
+}
+
+static void test_payload_reports_the_loaded_constants(void)
+{
+    buildPayload();
+    TEST_ASSERT_EQUAL_STRING("builtin", valueOf("cal.source"));
+    TEST_ASSERT_EQUAL_STRING("none", valueOf("cal.crc"));
+    TEST_ASSERT_EQUAL_STRING("94.000", valueOf("pid.ff_rev_us"));
+    TEST_ASSERT_EQUAL_STRING("160.000", valueOf("pid.start_rev_from_us"));
+    TEST_ASSERT_EQUAL_STRING("0.000", valueOf("pid.kd"));
+
+    SpeedConstants c = cfg::PID_CTRL::speed_defaults;
+    c.ff_rev_us = 110.0f;
+    InfoStatus status = {true, true, "reset", 1, true, Lsm9ds1Registers{}};
+    status.constants = {true, c, "eeprom", 0xBEEF, 20261106, BlockStatus::ok};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("eeprom", valueOf("cal.source"));
+    TEST_ASSERT_EQUAL_STRING("beef", valueOf("cal.crc"));
+    TEST_ASSERT_EQUAL_STRING("2026-11-06", valueOf("cal.written"));
+    TEST_ASSERT_EQUAL_STRING("110.000", valueOf("pid.ff_rev_us"));
+}
+
+static void test_payload_reports_stall_protection(void)
+{
+    buildPayload();
+    TEST_ASSERT_EQUAL_STRING("1", valueOf("fw.stall_protect"));
+    TEST_ASSERT_EQUAL_STRING("10.0", valueOf("stall.trip_a"));
+    TEST_ASSERT_EQUAL_STRING("0.10", valueOf("stall.moving_mps"));
+    TEST_ASSERT_EQUAL_STRING("500", valueOf("stall.trip_ms"));
+    TEST_ASSERT_EQUAL_STRING("2000", valueOf("stall.cooldown_ms"));
+    TEST_ASSERT_EQUAL_STRING("30000", valueOf("stall.lockout_ms"));
+    TEST_ASSERT_EQUAL_STRING("3", valueOf("stall.lockout_trips"));
+    TEST_ASSERT_EQUAL_STRING("60000", valueOf("stall.lockout_window_ms"));
+}
+
 // ------------------------------ chunks ---------------------------- //
 
 static void test_chunk_count(void)
@@ -304,5 +355,8 @@ int main(int, char **)
     RUN_TEST(test_chunks_reassemble_to_the_payload);
     RUN_TEST(test_packet_rejects_bad_index_and_small_buffer);
     RUN_TEST(test_slot_fits_on_the_wire);
+    RUN_TEST(test_payload_reports_power_range_and_dips);
+    RUN_TEST(test_payload_reports_stall_protection);
+    RUN_TEST(test_payload_reports_the_loaded_constants);
     return UNITY_END();
 }

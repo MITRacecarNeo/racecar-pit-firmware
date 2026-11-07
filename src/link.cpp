@@ -13,6 +13,7 @@
 #include "profile.h"
 #include "watchdog.h"
 #include "shared.h"
+#include "speed_store.h"
 
 namespace
 {
@@ -40,6 +41,10 @@ namespace
     // Amps packed as mA so sub-amp resolution survives the uint16.
     pkt.VoltAndCurr[1] = (uint16_t)(power_last.amps < 0.0f ? 0.0f : power_last.amps * 1000.0f);
     pkt.Encoder = measured_speed_mps;
+    const StallWord stall = unpackStallWord(stall_word);
+    pkt.EKF[0] = (float)(uint8_t)stall.state;
+    pkt.EKF[1] = stall.seconds_left;
+    pkt.EKF[2] = (float)stall.trips;
     pkt.Timestamp = (int32_t)micros();
     // Checksum the exact bytes going on the wire, magic included.
     pkt.Checksum = crc16_ccitt((const uint8_t *)&pkt, sizeof(TXPacket) - 2);
@@ -118,7 +123,8 @@ void InfoBuilder()
       if (p != nullptr)
       {
         const InfoStatus status = {imu_ok, power_ok, wdt::lastResetCause(), wdt::resetFlags(), wdt::armed(),
-                                   imu_ok ? imu_regs : Lsm9ds1Registers{}};
+                                   imu_ok ? imu_regs : Lsm9ds1Registers{}, readShared(dip_summary),
+                                   speedConstantsInfo()};
         p->len = writeFirmwareInfo(status, p->data, sizeof(p->data));
         const uint16_t crc = crc16_ccitt((const uint8_t *)p->data, p->len);
         if (built && (p->len != last_len || crc != last_crc))
@@ -186,6 +192,7 @@ void UARTRx()
       framer.reset();
       PROF_COUNT(rx_short);
     }
+    lastRxTime = expireRxTime(lastRxTime, micros(), cfg::DISP::rx_expire_us);
     threads.delay(cfg::TEENSY_THREADS::tick_ms);
   }
 }

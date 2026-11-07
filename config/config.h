@@ -2,7 +2,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "car_constants.h"
+#include "dip_record.h"
+#include "display_state.h"
+#include "led_patterns.h"
 #include "packets.h"
+#include "stall_guard.h"
 #include "start_assist.h"
 
 // All tunables live here. Nothing in src/ should hardcode a value that belongs
@@ -59,6 +64,13 @@ namespace cfg
         constexpr uint16_t num_leds = 84;
         constexpr uint8_t led_pin = 9;
         constexpr uint8_t brightness = 25;
+        constexpr Rgb bar_red = {255, 0, 0};          // battery meter
+        constexpr Rgb loading_orange = {255, 40, 0}; // power-on loading bar
+        // The driver's safety-override color (pit_node OVERRIDE_LED_RGB).
+        constexpr Rgb stall_orange = {255, 110, 0}; // stall and lockout flash
+        // Loading bar from both front ends to the back middle over this long
+        // after power-on, about the time the Pi takes to start the driver.
+        constexpr uint32_t loading_bar_ms = 60000;
     }
 
     namespace ESC_10BL60_G2
@@ -149,8 +161,14 @@ namespace cfg
         // 16 samples of 1.1 ms bus plus 1.1 ms shunt conversion give a new
         // value every 35.2 ms; reading faster only repeats it.
         constexpr uint16_t poll_ms = 10;
-        constexpr float max_curr_expected = 8.0;  // Amps
+        // 40 A is the shunt's range (81.9 mV across 2 mOhm); a locked rotor
+        // draws about 16 A. Used without the library's 1/2/5 LSB rounding,
+        // which would coarsen 1.22 mA to 2 mA.
+        constexpr float max_curr_expected = 40.0; // Amps
         constexpr float shunt_resistance = 0.002; // Ohms
+        // Voltage dip record (src/dip_record.h): {dip_v, rearm_v, min_ms,
+        // valid_v}. Below 7.2 V for 100 ms counts; the next counts after 7.3 V.
+        constexpr DipParams dip = {7.2f, 7.3f, 100, 1.0f};
     }
 
     namespace LSM9DS1_IMU
@@ -206,6 +224,15 @@ namespace cfg
     {
         constexpr uint32_t cmd_timeout_ms = 1000; // Pi command staleness -> idle defaults
         constexpr uint32_t led_load_ms = 10000;   // rainbow sweep duration on Pi connect
+        // No Pi command this long after power-on: show OFF instead of LOAD. The
+        // Pi takes about 90 s to boot.
+        constexpr uint32_t boot_timeout_ms = 180000;
+        // {word_ms, flash_ms, blink_ms}: each stall word 1 s; the strip
+        // flashes orange for 2 s after a trip.
+        constexpr DisplayParams stall_display = {1000, 2000, 250};
+        // A Pi command timestamp older than this is cleared, well inside the
+        // 71.6 min wrap of the microsecond clock.
+        constexpr uint32_t rx_expire_us = 60000000;
         // The idle LED bar reads charge, not volts; endpoints and the 2S curve
         // live in battery.h (batt_empty_mv / batt_full_mv).
     }
@@ -233,6 +260,9 @@ namespace cfg
 #else
         constexpr uint32_t timeout_ms = 100;
 #endif
+        // While an EEPROM save runs. A full flash sector is erased with
+        // interrupts off (typical 45 ms, up to 400 ms) and then rewritten.
+        constexpr uint32_t flash_timeout_ms = 1500;
     }
 
     namespace DRIVE_LOOP
@@ -249,7 +279,6 @@ namespace cfg
         constexpr uint16_t tick_ms = 1;          // worker thread yield
         constexpr uint16_t loop_tick_ms = 25;    // Arduino loop() yield
         constexpr uint16_t disp_tick_ms = 50;    // dot matrix refresh
-        constexpr uint16_t splash_tick_ms = 20;  // boot splash animation step
         constexpr uint16_t info_tick_ms = 10;    // info builder poll
     }
 
@@ -306,6 +335,22 @@ namespace cfg
         // slow for the running feedforward to carry it.
         constexpr StartAssistParams start_assist_fwd = {0.0f, 0.0f, 0.0f, 0, 0, 0.0f, 0.0f};
         constexpr StartAssistParams start_assist_rev = {160.0f, 320.0f, 2000.0f, 600000, 300000, 0.5f, 0.8f};
+
+        // Fleet values, used when the EEPROM holds no valid per-car set
+        // (src/car_constants.h). Field order follows SpeedConstants.
+        constexpr SpeedConstants speed_defaults = {
+            deadband_fwd_us, kv_ff_fwd, deadband_rev_us, kv_ff_rev, kp, kp_boost, err_threshold,
+            ki, ki_rev, max_integral, start_assist_rev.from_us, start_assist_rev.max_us};
+    }
+
+    namespace STALL_GUARD
+    {
+        constexpr bool enabled = true;
+        // Battery current includes the Pi, about 2 A at idle. Normal reverse
+        // starts peak near 16 A for up to 0.19 s; a locked rotor holds 12-16 A.
+        // {trip_a, moving_mps, trip_us, cooldown_us, lockout_us, lockout_trips,
+        // lockout_window_us}
+        constexpr StallParams params = {10.0f, 0.1f, 500000, 2000000, 30000000, 3, 60000000};
     }
 
     // Raw-PWM test build (-DRCN_RAW_PWM, env teensy41_raw_pwm): a Pi command

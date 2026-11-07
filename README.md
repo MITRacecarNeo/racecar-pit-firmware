@@ -22,9 +22,11 @@ format in `src/packets.h` and the version numbers that select a matching pair; s
 - [Drive control](#drive-control)
 - [Telemetry](#telemetry)
 - [RC receiver](#rc-receiver)
-- [Idle displays](#idle-displays)
+- [Stall protection](#stall-protection)
+- [Displays](#displays)
 - [Build and flash](#build-and-flash)
 - [ESC calibration](#esc-calibration)
+- [Speed constants](#speed-constants)
 - [Tests](#tests)
 - [Architecture](#architecture)
 - [Changelog](#changelog)
@@ -56,6 +58,7 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
+| 0.9.x | 0.9.2 | sizes unchanged; `EKF[0..2]` carry the stall state |
 | 0.9.x | 0.9.1 | sizes unchanged; needs the ESC calibration |
 | 0.9.x | 0.9.0 | sizes unchanged; adds the info reply |
 | 0.7.4 - 0.9.0 | 0.7.1 | unchanged |
@@ -307,14 +310,42 @@ the switches is therefore optional and only useful for telling the operator what
 the car is doing. Flipping swD back up resumes drive on the next frame,
 with no reconnect.
 
-## Idle displays
+## Stall protection
 
-With no fresh Pi command the dot matrix shows the drive-mode glyph and the LED
-strip shows a red charge bar filling from both ends.
+A stall is throttle commanded with the wheels below 0.1 m/s and battery
+current above 10 A. Half a second of it trips the guard; time out of it counts
+the timer back down, so a stall broken up by start-assist rests still trips.
 
-The bar reads state of charge, not volts. A 2S LiPo runs from 8.4 V (4.20
-V/cell) down to 7.0 V (3.50 V/cell), but not evenly: under the car's idle load
-half the charge is gone by 7.55 V, and the last 10% falls between 7.3 and
+| State | Throttle | Ends |
+| ----- | -------- | ---- |
+| Tripped | neutral | when the stick or Pi command returns to neutral |
+| Cooldown | neutral | 2 s later |
+| Lockout | neutral | 30 s later; replaces the cooldown on the third trip within 60 s |
+
+It applies to Pi and RC driving; steering is unaffected. Telemetry `EKF`
+carries the state, the seconds left and the trip count
+([docs/protocol.md](docs/protocol.md)). Values are in `cfg::STALL_GUARD`.
+
+## Displays
+
+The Teensy sees the Pi only through its commands.
+
+| Situation | Dot matrix | LED strip |
+| --------- | ---------- | --------- |
+| Power-on, before the first Pi command | NEO V2 | orange bar filling from both front ends toward the back over 60 s |
+| Pi running, nothing drawn | NEO V2 | red battery bar from both front ends toward the back |
+| Pi drawing | the Pi's image | the Pi's colors, or the driver-start rainbow |
+| Pi commands stopped (shutdown, brownout, driver restart), or no Pi 180 s after power-on | OFF | dark |
+| Stall tripped or cooling down | WARN, HIGH, CURR, 1 s each | orange flash for 2 s |
+| Stall lockout | LOCK | orange flash until it ends |
+
+Dot matrix text uses the narrow font in `src/small_font.h`; NEO V2 is a
+fixed bitmap in `src/logo.h` drawn from the same glyphs. Preview any text
+without the display: `python3 scripts/dotmatrix_preview.py OFF --out previews/`.
+
+The battery bar reads state of charge, not volts. A 2S LiPo runs from 8.4 V
+(4.20 V/cell) down to 7.0 V (3.50 V/cell), but not evenly: under the car's idle
+load half the charge is gone by 7.55 V, and the last 10% falls between 7.3 and
 7.0 V in a few minutes. `src/battery.cpp` holds a 15-point measured discharge
 curve of load voltage against charge; `batterySocPercent` interpolates it to
 0-100% and the bar length follows. Under driving load the voltage sags
@@ -385,6 +416,32 @@ full forward. A held step returns to neutral when USB serial has been quiet
 for 2 s (`cfg::ESC_CAL::link_timeout_ms`); the script polls every 0.5 s. The
 script sends no throttle until the operator confirms the ESC LED is flashing.
 
+## Speed constants
+
+Every car runs the fleet speed-loop constants unless its EEPROM holds its own
+set. The per-car set covers the feedforward, the PI gains and the reverse
+start ramp: the `pid.*` keys listed by `get`.
+
+Run these on the Pi with the Teensy USB cable plugged in. Changes are refused
+while the car is moving.
+
+| Command | Effect |
+| ------- | ------ |
+| `python3 scripts/car_constants.py get` | Print the values in use and where they came from (`cal.source`) |
+| `python3 scripts/car_constants.py set pid.ff_rev_us=110` | Change values now; lost at power-off |
+| `python3 scripts/car_constants.py save` | Store the values in use, dated today |
+| `python3 scripts/car_constants.py revert` | Go back to the stored values |
+| `python3 scripts/car_constants.py defaults` | Use the fleet values (still stored until `erase`) |
+| `python3 scripts/car_constants.py erase` | Remove the stored values; the fleet values load at power-on |
+| `python3 scripts/car_constants.py export car.json` | Save the values to a file |
+| `python3 scripts/car_constants.py import car.json` | Set every value from a file, then store it |
+
+The stored block carries a format number and a CRC. A block that fails either
+check, or holds a value outside its range, is ignored and the fleet values
+load; `cal.eeprom` in the firmware info says why. About one save in 700 erases
+a flash sector, which stops the board for up to about 85 ms (the watchdog
+allows 1.5 s during a save), so saving is only allowed with the car stopped.
+
 ## Tests
 
 Host unit tests over the Arduino-free logic, from the repository root:
@@ -440,6 +497,22 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [0.9.2] - 2026-11-06
+Pairs with driver v0.9.x; telemetry and command sizes unchanged.
+- Added: stall protection on Pi and RC driving. A blocked wheel trips to
+  neutral in about 0.5 s; 2 s cooldown, 30 s lockout after 3 trips in a
+  minute. State in telemetry `EKF[0..2]`; see [Stall protection](#stall-protection).
+- Added: per-car speed constants in the EEPROM with `scripts/car_constants.py`;
+  the fleet values load when none are stored. See [Speed constants](#speed-constants).
+- Added: voltage dip record (`power.min_mv`, `power.dip_count`,
+  `power.last_dip_ms`) in the firmware info.
+- Changed: displays. NEO V2 on the dot matrix at power-on and idle, OFF when
+  the Pi stops, WARN / HIGH / CURR and LOCK on a stall; orange loading bar at
+  power-on. See [Displays](#displays).
+- Changed: current sensor range 40 A (was 8 A, clipping at 16.4 A).
+- Fixed: a long-gone Pi command could look fresh for up to 1 s after the
+  microsecond clock wrapped (every 71.6 min).
 
 ### [0.9.1] - 2026-11-02
 Pairs with driver v0.9.x; telemetry and command sizes unchanged. Every car

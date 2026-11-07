@@ -53,6 +53,12 @@ struct PowerSample
   float volts;
 };
 extern Seqlock<PowerSample> power_sample;
+extern Seqlock<DipSummary> dip_summary; // also ReadCurrAndVolt
+
+// Stall guard output, written by the drive tick (drive.cpp): packStallWord
+// (src/stall_guard.h), and millis() at the last trip.
+extern volatile uint32_t stall_word;
+extern volatile uint32_t stall_trip_ms;
 
 // LSM9DS1, written by ReadIMUStates (sensors.cpp).
 struct ImuSample

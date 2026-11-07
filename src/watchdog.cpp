@@ -20,10 +20,13 @@ namespace wdt
     constexpr uint32_t refresh_key = 0xB480A602;
     constexpr uint32_t ticks_per_ms = 32;
     constexpr uint32_t timeout_ticks = cfg::WATCHDOG::timeout_ms * ticks_per_ms;
+    constexpr uint32_t flash_timeout_ticks = cfg::WATCHDOG::flash_timeout_ms * ticks_per_ms;
     static_assert(timeout_ticks >= 32 && timeout_ticks <= 0xFFFF,
                   "watchdog timeout must be 1 to 2047 ms without the prescaler");
+    static_assert(flash_timeout_ticks >= timeout_ticks && flash_timeout_ticks <= 0xFFFF,
+                  "flash timeout must be at least the timeout and at most 2047 ms");
 
-    void start()
+    void configure(uint32_t ticks)
     {
       CCM_CCGR5 |= CCM_CCGR5_WDOG3(3);
       __disable_irq();
@@ -39,10 +42,12 @@ namespace wdt
         *cnt16 = (uint16_t)(unlock_key >> 16);
       }
       WDOG3_WIN = 0;
-      WDOG3_TOVAL = timeout_ticks;
+      WDOG3_TOVAL = ticks;
       WDOG3_CS = WDOG_CS_FLG | WDOG_CS_UPDATE | WDOG_CS_CMD32EN | WDOG_CS_CLK(1) | WDOG_CS_EN;
       __enable_irq();
     }
+
+    void start() { configure(timeout_ticks); }
 
     void refresh()
     {
@@ -65,6 +70,14 @@ namespace wdt
   const char *lastResetCause() { return reset_cause; }
   uint32_t resetFlags() { return reset_flags; }
   bool armed() { return is_armed; }
+
+  void flashWrite(bool active)
+  {
+    if (!is_armed)
+      return;
+    configure(active ? flash_timeout_ticks : timeout_ticks);
+    refresh();
+  }
 
   void beat(Context c)
   {
