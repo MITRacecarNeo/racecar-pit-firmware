@@ -78,7 +78,7 @@ void ReadCurrAndVolt()
     if (found)
     {
       ina.setAverage(cfg::INA226_SENSOR::avg_set);
-      ina.setMaxCurrentShunt(cfg::INA226_SENSOR::max_curr_expected, cfg::INA226_SENSOR::shunt_resistance);
+      ina.setMaxCurrentShunt(cfg::INA226_SENSOR::max_curr_expected, cfg::INA226_SENSOR::shunt_resistance, false);
     }
     I2CMutex.unlock();
     if (found)
@@ -104,6 +104,9 @@ void ReadCurrAndVolt()
     PROF_COUNT(power_reads);
 
     power_sample.write({amps, volts});
+    static DipRecord dips;
+    dipTick(dips, volts, millis(), cfg::INA226_SENSOR::dip);
+    dip_summary.write(dips.summary);
 
     threads.delay(cfg::INA226_SENSOR::poll_ms);
   }

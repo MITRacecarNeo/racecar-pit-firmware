@@ -212,6 +212,24 @@ static void test_payload_without_imu_reports_zero_rates(void)
     TEST_ASSERT_EQUAL_STRING("missing", valueOf("status.imu"));
 }
 
+static void test_payload_reports_power_range_and_dips(void)
+{
+    InfoStatus status = {true, true, "reset", 1, true, Lsm9ds1Registers{}};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("40.0", valueOf("power.max_current_a"));
+    TEST_ASSERT_EQUAL_STRING("7200", valueOf("power.dip_mv"));
+    TEST_ASSERT_EQUAL_STRING("100", valueOf("power.dip_min_ms"));
+    TEST_ASSERT_EQUAL_STRING("-1", valueOf("power.min_mv"));
+    TEST_ASSERT_EQUAL_STRING("0", valueOf("power.dip_count"));
+    TEST_ASSERT_EQUAL_STRING("-1", valueOf("power.last_dip_ms"));
+
+    status.dips = {true, 7.1234f, 3, 123456};
+    writeFirmwareInfo(status, payload, sizeof(payload));
+    TEST_ASSERT_EQUAL_STRING("7123", valueOf("power.min_mv"));
+    TEST_ASSERT_EQUAL_STRING("3", valueOf("power.dip_count"));
+    TEST_ASSERT_EQUAL_STRING("123456", valueOf("power.last_dip_ms"));
+}
+
 // ------------------------------ chunks ---------------------------- //
 
 static void test_chunk_count(void)
@@ -304,5 +322,6 @@ int main(int, char **)
     RUN_TEST(test_chunks_reassemble_to_the_payload);
     RUN_TEST(test_packet_rejects_bad_index_and_small_buffer);
     RUN_TEST(test_slot_fits_on_the_wire);
+    RUN_TEST(test_payload_reports_power_range_and_dips);
     return UNITY_END();
 }

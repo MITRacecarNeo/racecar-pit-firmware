@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "dip_record.h"
 #include "display_state.h"
 #include "led_patterns.h"
 #include "packets.h"
@@ -157,8 +158,14 @@ namespace cfg
         // 16 samples of 1.1 ms bus plus 1.1 ms shunt conversion give a new
         // value every 35.2 ms; reading faster only repeats it.
         constexpr uint16_t poll_ms = 10;
-        constexpr float max_curr_expected = 8.0;  // Amps
+        // 40 A is the shunt's range (81.9 mV across 2 mOhm); a locked rotor
+        // draws about 16 A. Used without the library's 1/2/5 LSB rounding,
+        // which would coarsen 1.22 mA to 2 mA.
+        constexpr float max_curr_expected = 40.0; // Amps
         constexpr float shunt_resistance = 0.002; // Ohms
+        // Voltage dip record (src/dip_record.h): {dip_v, rearm_v, min_ms,
+        // valid_v}. Below 7.2 V for 100 ms counts; the next counts after 7.3 V.
+        constexpr DipParams dip = {7.2f, 7.3f, 100, 1.0f};
     }
 
     namespace LSM9DS1_IMU

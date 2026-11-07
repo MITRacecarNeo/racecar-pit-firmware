@@ -4,6 +4,44 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-027 - 2026-11-06
+
+### Setup
+Reference car on the stand, Pi running teleop with lidar and IMU fusion,
+wheels still. Before: `v0.9.2.4-pcb` (INA226 range 8 A, 0.5 mA LSB). After:
+the same tree with the 40 A range (1.22 mA LSB, unrounded) and the dip
+record. `/battery/current` and `/battery/voltage` sampled from the Pi.
+
+### Hypothesis
+The 40 A range keeps the idle current and voltage readings within their
+normal spread, with no offset.
+
+### Method
+Mean, standard deviation and range of each topic over 20 s before and 25 s
+after the flash, at about 200 samples per second.
+
+### Observations
+| Name | Before | After | Unit |
+| ---- | ------ | ----- | ---- |
+| Current mean | 1.964 | 1.926 | A |
+| Current sd | 0.075 | 0.037 | A |
+| Current min to max | 1.872 to 2.252 | 1.867 to 2.242 | A |
+| Voltage mean | 7.832 | 7.825 | V |
+| Voltage sd | 0.0019 | 0.0016 | V |
+| Info `power.max_current_a` | 8.0 | 40.0 | A |
+
+- The 0.038 A difference in means is inside one standard deviation of the
+  before run; idle load varies with the Pi.
+- `power.min_mv` and `power.last_dip_ms` read -1 in the info latched at
+  startup: the driver requests it within about 1 s of a reset, before the
+  first voltage sample. A later request reports current values.
+
+### Conclusion
+Supported. No offset or scale change at idle; current above 16.38 A is
+checked during the stall tests.
+
+---
+
 ## TL-026 - 2026-11-02
 
 ### Setup

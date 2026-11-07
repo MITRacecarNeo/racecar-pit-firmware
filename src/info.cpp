@@ -253,6 +253,8 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.fixed("power.max_current_a", INA226_SENSOR::max_curr_expected, 1);
   w.integer("power.avg_samples", ina226_avg_samples[INA226_SENSOR::avg_set]);
   w.integer("power.poll_ms", INA226_SENSOR::poll_ms);
+  w.integer("power.dip_mv", (int32_t)(INA226_SENSOR::dip.dip_v * 1000.0f + 0.5f));
+  w.integer("power.dip_min_ms", (int32_t)INA226_SENSOR::dip.min_ms);
   w.integer("battery.cells", 2);
   w.integer("battery.empty_mv", batt_empty_mv);
   w.integer("battery.full_mv", batt_full_mv);
@@ -268,6 +270,9 @@ size_t writeFirmwareInfo(const InfoStatus &status, char *buf, size_t cap)
   w.text("status.watchdog", !WATCHDOG::enabled ? "off" : status.watchdog_armed ? "armed" : "starting");
   w.text("status.last_reset", status.last_reset ? status.last_reset : "unknown");
   w.integer("status.reset_flags", (int32_t)status.reset_flags);
+  w.integer("power.min_mv", status.dips.any_reading ? (int32_t)(status.dips.min_v * 1000.0f + 0.5f) : -1);
+  w.integer("power.dip_count", status.dips.count);
+  w.integer("power.last_dip_ms", status.dips.count ? (int32_t)status.dips.last_dip_ms : -1);
 
   return w.length();
 }

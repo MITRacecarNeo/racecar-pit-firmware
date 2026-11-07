@@ -169,9 +169,10 @@ values come from `config/config.h` unless noted.
 | `imu.read_hz` | 250 | LSM9DS1 read rate |
 | `imu.accel_unit`, `imu.gyro_unit`, `imu.mag_unit` | m/s2, rad/s, uT | telemetry `IMU` units |
 | `power.sensor` | INA226 | power sensor |
-| `power.shunt_ohm`, `power.max_current_a` | 0.0020, 8.0 | shunt and current range |
+| `power.shunt_ohm`, `power.max_current_a` | 0.0020, 40.0 | shunt and current range |
 | `power.avg_samples` | 16 | INA226 hardware averaging |
 | `power.poll_ms` | 10 | INA226 read period |
+| `power.dip_mv`, `power.dip_min_ms` | 7200, 100 | a dip is the bus voltage below `dip_mv` for `dip_min_ms`; the next counts after 7300 mV |
 | `battery.cells`, `battery.empty_mv`, `battery.full_mv` | 2, 7000, 8400 | charge bar endpoints |
 | `i2c.clock_hz` | 400000 | I2C bus clock |
 | `display.leds`, `display.dot_rows`, `display.dot_cols` | 84, 8, 24 | display sizes |
@@ -180,6 +181,13 @@ values come from `config/config.h` unless noted.
 | `status.watchdog` | armed | `starting` until every context has run once after boot; `off` when disabled |
 | `status.last_reset` | watchdog | cause of the last boot: `watchdog`, `software`, `reset`, or `unknown` |
 | `status.reset_flags` | 128 | `SRC_SRSR` at boot (bit 7 watchdog 3, bit 1 software or lockup, bit 0 reset pin) |
+| `power.min_mv` | 7412 | lowest bus voltage since boot, at the time of the request; -1 before the first reading |
+| `power.dip_count` | 0 | dips since boot, at the time of the request |
+| `power.last_dip_ms` | 812345 | Teensy uptime at the start of the last dip; -1 for none |
+
+The `power.min_mv`, `power.dip_count` and `power.last_dip_ms` values are taken
+when the reply is built. A request made right after a reset finds no voltage
+reading yet; request again for current values.
 
 ## Compatibility
 

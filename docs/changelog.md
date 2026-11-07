@@ -24,6 +24,11 @@ All notable changes to this project. Format: Keep a Changelog
 - LED strip patterns (`src/led_patterns.*`): red loading bar from LED 0 to
   the last over 60 s after power-on; battery meter unchanged (red, filling
   from both front ends toward the back). 6 host tests (`test_led`).
+- Info keys `power.min_mv` (lowest bus voltage since boot), `power.dip_count`,
+  `power.last_dip_ms` (uptime at the start of the last dip; -1 for none),
+  `power.dip_mv` and `power.dip_min_ms`. A dip is below 7.2 V for 100 ms;
+  the next counts after 7.3 V (`src/dip_record.*`). 7 host tests
+  (`test_dip`). `docs/test-log.md` TL-027.
 
 ### Changed
 - Default displays follow the display state logic: the dot matrix shows LOAD
@@ -31,14 +36,14 @@ All notable changes to this project. Format: Keep a Changelog
   Pi draws nothing; the I / A / M mode glyphs and the boot splash are gone.
   Dot matrix text uses the narrow font. The LED strip shows the loading
   bar, then the battery meter, and goes dark when the Pi stops.
+- Version 0.9.2.
+- INA226 range 40 A (was 8 A, clipping at 16.38 A); current LSB 1.22 mA (was
+  0.5 mA). `power.max_current_a=40.0`. Telemetry current stays u16 mA.
 
 ### Fixed
 - A Pi command timestamp older than 60 s is cleared, so the 71.6 min wrap of
   the microsecond clock can no longer make a long-gone Pi command look fresh
   for up to 1 s.
-
-### Changed
-- Version 0.9.2.
 
 ## [0.9.1] - 2026-11-02
 

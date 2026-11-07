@@ -53,6 +53,7 @@ struct PowerSample
   float volts;
 };
 extern Seqlock<PowerSample> power_sample;
+extern Seqlock<DipSummary> dip_summary; // also ReadCurrAndVolt
 
 // LSM9DS1, written by ReadIMUStates (sensors.cpp).
 struct ImuSample
