@@ -4,6 +4,46 @@ One entry per run. Record numbers, not adjectives.
 
 ---
 
+## TL-030 - 2026-11-06
+
+### Setup
+Release regression on the reference car, clean build `v0.9.2.8-pcb`
+(`d504479`), fleet speed constants (`cal.source=builtin`), battery 7.5 to
+7.6 V. Floor runs: Pi publishes `/drive` while RB is held, one command per try
+from standstill (`pwm_sweep.py setpoint`), lidar stops on.
+
+### Hypothesis
+The release build keeps the TL-026 speed loop, the 200 Hz link, and every
+display state; normal starts do not approach the stall guard.
+
+### Observations
+| Check | Result |
+| ----- | ------ |
+| Telemetry | 200.0 Hz on every topic, stamp gaps median 5.00 ms, max 5.00 ms |
+| Displays | NEO V2 at power-on and idle, OFF on a driver restart, WARN / HIGH / CURR and LOCK on stall trips; checked by the operator |
+| Stall trips | TL-028 |
+
+| Target | Try | Start (0.3 s of motion) | Hold speed, last 1 s | Peak current | Longest above 10 A |
+| ------ | --- | ----------------------- | -------------------- | ------------ | ------------------ |
+| 0.51 m/s reverse | 1 | 0.46 s | 0.46 m/s | 16.7 A | 64 ms |
+| | 2 | 0.42 s | 0.56 m/s | 13.1 A | 24 ms |
+| | 3 | 0.40 s | 0.56 m/s | 8.6 A | 0 ms |
+| 0.75 m/s reverse | 1 | 0.31 s | 0.755 m/s | 18.6 A | 105 ms |
+| | 2 | 0.23 s | 0.825 m/s | 16.2 A | - |
+| | 3 | 0.28 s | 0.745 m/s | 18.3 A | - |
+
+- Hold speeds are within 0.08 m/s of the target (limit 0.15).
+- Starts at 0.51 m/s take 0.40 to 0.46 s, inside the 0.20 to 0.55 s of the
+  same constants in TL-026, above the 0.3 s target; the battery was 7.53 V.
+- Normal starts stay above 10 A for at most 105 ms against the 500 ms trip.
+
+### Conclusion
+Supported, with the slow 0.51 m/s reverse starts carried over from v0.9.1.
+Logs: /mnt/nvme/data/parity-reverse/sweeps/sweep_20261106_2146*.csv,
+sweep_20261106_214720.csv.
+
+---
+
 ## TL-029 - 2026-11-06
 
 ### Setup

@@ -58,6 +58,7 @@ Rules for cutting a release:
 
 | Driver | Firmware | Wire format |
 | ------ | -------- | ----------- |
+| 0.9.x | 0.9.2 | sizes unchanged; `EKF[0..2]` carry the stall state |
 | 0.9.x | 0.9.1 | sizes unchanged; needs the ESC calibration |
 | 0.9.x | 0.9.0 | sizes unchanged; adds the info reply |
 | 0.7.4 - 0.9.0 | 0.7.1 | unchanged |
@@ -496,6 +497,22 @@ the data pipeline, and the pin assignments, and `docs/protocol.md` for the wire 
 ## Changelog
 
 Latest entries; full history in `docs/changelog.md`.
+
+### [0.9.2] - 2026-11-06
+Pairs with driver v0.9.x; telemetry and command sizes unchanged.
+- Added: stall protection on Pi and RC driving. A blocked wheel trips to
+  neutral in about 0.5 s; 2 s cooldown, 30 s lockout after 3 trips in a
+  minute. State in telemetry `EKF[0..2]`; see [Stall protection](#stall-protection).
+- Added: per-car speed constants in the EEPROM with `scripts/car_constants.py`;
+  the fleet values load when none are stored. See [Speed constants](#speed-constants).
+- Added: voltage dip record (`power.min_mv`, `power.dip_count`,
+  `power.last_dip_ms`) in the firmware info.
+- Changed: displays. NEO V2 on the dot matrix at power-on and idle, OFF when
+  the Pi stops, WARN / HIGH / CURR and LOCK on a stall; orange loading bar at
+  power-on. See [Displays](#displays).
+- Changed: current sensor range 40 A (was 8 A, clipping at 16.4 A).
+- Fixed: a long-gone Pi command could look fresh for up to 1 s after the
+  microsecond clock wrapped (every 71.6 min).
 
 ### [0.9.1] - 2026-11-02
 Pairs with driver v0.9.x; telemetry and command sizes unchanged. Every car

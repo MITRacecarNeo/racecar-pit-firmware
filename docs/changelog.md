@@ -5,6 +5,13 @@ All notable changes to this project. Format: Keep a Changelog
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-06
+
+Pairs with `racecar_neo_ros2_driver` v0.9.x. Telemetry and command sizes are
+unchanged; telemetry `EKF[0..2]` now carry the stall guard state, and the
+info reply adds keys. The per-car speed constants default to the 0.9.1 fleet
+values, so no car needs a refit.
+
 ### Added
 - `src/small_font.h`: narrow capitals for the 8 x 24 dot matrix, 6 rows with
   a 1-dot margin above and below.
